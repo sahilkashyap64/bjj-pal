@@ -518,6 +518,8 @@ function MainScreen({ name }: { name: string }) {
   const [showTour, setShowTour] = useState(false);
   const [tourStep, setTourStep] = useState(0);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<TechniqueCategoryKey>("All");
 
   const fabRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -556,6 +558,17 @@ function MainScreen({ name }: { name: string }) {
       ] as const,
     [],
   );
+
+  useEffect(() => {
+    if (!isFilterOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsFilterOpen(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isFilterOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -624,6 +637,22 @@ function MainScreen({ name }: { name: string }) {
   };
 
   const currentTourStep = tourSteps[tourStep];
+
+  const visibleTechniques = useMemo(() => {
+    const techniques = [
+      {
+        id: "triangle-choke",
+        title: "Triangle Choke",
+        dateLabel: "Mar 26 3:04 AM",
+        category: "Submission" as const,
+        level: "Beginner" as const,
+        extraTag: "+1" as const,
+      },
+    ];
+
+    if (selectedCategory === "All") return techniques;
+    return techniques.filter((technique) => technique.category === selectedCategory);
+  }, [selectedCategory]);
 
   const popover = useMemo(() => {
     if (!anchorRect) return null;
@@ -726,9 +755,10 @@ function MainScreen({ name }: { name: string }) {
                 ref={filterRef}
                 type="button"
                 aria-label="Filters"
+                onClick={() => setIsFilterOpen((value) => !value)}
                 className="grid h-11 w-11 place-items-center rounded-xl border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
               >
-                <ChevronDownIcon />
+                {isFilterOpen ? <ChevronUpIcon /> : <ChevronDownIcon />}
               </button>
             </div>
 
@@ -756,35 +786,40 @@ function MainScreen({ name }: { name: string }) {
               </div>
             </div>
 
-            <p className="mt-5 text-xs text-zinc-500">1 technique found</p>
+            <p className="mt-5 text-xs text-zinc-500">
+              {visibleTechniques.length} technique{visibleTechniques.length === 1 ? "" : "s"} found
+            </p>
 
-            <button
-              ref={techniqueCardRef}
-              type="button"
-              className="mt-3 w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-left shadow-[0_18px_60px_rgba(0,0,0,0.5)] transition hover:bg-white/10"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="truncate text-lg font-semibold">Triangle Choke</p>
-                  <p className="mt-0.5 text-xs text-zinc-500">Mar 26 3:04 AM</p>
+            {visibleTechniques.map((technique) => (
+              <button
+                key={technique.id}
+                ref={techniqueCardRef}
+                type="button"
+                className="mt-3 w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-left shadow-[0_18px_60px_rgba(0,0,0,0.5)] transition hover:bg-white/10"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="truncate text-lg font-semibold">{technique.title}</p>
+                    <p className="mt-0.5 text-xs text-zinc-500">{technique.dateLabel}</p>
+                  </div>
+                  <span className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-black/30 text-zinc-200">
+                    <ChevronDownIcon />
+                  </span>
                 </div>
-                <span className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-black/30 text-zinc-200">
-                  <ChevronDownIcon />
-                </span>
-              </div>
 
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
-                  Submission
-                </span>
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
-                  Beginner
-                </span>
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
-                  +1
-                </span>
-              </div>
-            </button>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
+                    {technique.category}
+                  </span>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
+                    {technique.level}
+                  </span>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
+                    {technique.extraTag}
+                  </span>
+                </div>
+              </button>
+            ))}
           </main>
         ) : (
           <main className="mt-10 flex-1 rounded-3xl border border-white/10 bg-white/5 p-6 text-zinc-300">
@@ -805,6 +840,61 @@ function MainScreen({ name }: { name: string }) {
         </button>
 
         <BottomNav />
+
+        {isFilterOpen ? (
+          <div className="fixed inset-0 z-40">
+            <button
+              type="button"
+              aria-label="Close filters"
+              className="absolute inset-0 bg-black/65"
+              onClick={() => setIsFilterOpen(false)}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Select Category"
+              className="absolute left-1/2 top-[180px] w-[min(92vw,420px)] -translate-x-1/2 overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 shadow-[0_30px_90px_rgba(0,0,0,0.8)]"
+            >
+              <div className="px-6 py-5">
+                <p className="text-center text-base font-semibold text-white">Select Category</p>
+              </div>
+              <div className="border-t border-white/10">
+                {techniqueCategories.map((category) => {
+                  const active = category.key === selectedCategory;
+                  return (
+                    <button
+                      key={category.key}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCategory(category.key);
+                        setIsFilterOpen(false);
+                      }}
+                      className={`flex w-full items-center justify-between gap-4 px-6 py-4 text-left transition ${
+                        active ? "bg-blue-600/25 text-blue-200" : "text-white hover:bg-white/5"
+                      }`}
+                    >
+                      <span className="flex items-center gap-3">
+                        <span className={`h-3 w-3 rounded-full ${category.dot}`} aria-hidden="true" />
+                        <span className={`text-sm font-semibold ${active ? "text-blue-200" : "text-white"}`}>
+                          {category.label}
+                        </span>
+                      </span>
+                      {active ? (
+                        <span className="text-blue-200" aria-hidden="true">
+                          ✓
+                        </span>
+                      ) : (
+                        <span className="text-transparent" aria-hidden="true">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {showTour && popover ? (
           <div className="fixed inset-0 z-50">
@@ -934,6 +1024,27 @@ function BottomNav() {
   );
 }
 
+type TechniqueCategoryKey =
+  | "All"
+  | "Submission"
+  | "Sweep"
+  | "Takedown"
+  | "Guard Pass"
+  | "Guard"
+  | "Control"
+  | "Escape";
+
+const techniqueCategories: Array<{ key: TechniqueCategoryKey; label: string; dot: string }> = [
+  { key: "All", label: "All", dot: "bg-zinc-400" },
+  { key: "Submission", label: "Submission", dot: "bg-red-500" },
+  { key: "Sweep", label: "Sweep", dot: "bg-orange-500" },
+  { key: "Takedown", label: "Takedown", dot: "bg-sky-500" },
+  { key: "Guard Pass", label: "Guard Pass", dot: "bg-emerald-500" },
+  { key: "Guard", label: "Guard", dot: "bg-green-500" },
+  { key: "Control", label: "Control", dot: "bg-pink-500" },
+  { key: "Escape", label: "Escape", dot: "bg-yellow-400" },
+];
+
 function UserIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
@@ -994,6 +1105,20 @@ function ChevronDownIcon() {
     <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
       <path
         d="m6 9 6 6 6-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChevronUpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="m6 15 6-6 6 6"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
