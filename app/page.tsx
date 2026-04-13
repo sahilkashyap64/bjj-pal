@@ -24,7 +24,7 @@ export default function Home() {
   const [belt, setBelt] = useState<Belt>("White");
   const [stripes, setStripes] = useState(0);
   const [selectedChallenges, setSelectedChallenges] = useState<string[]>([]);
-  const [doneOnboarding, setDoneOnboarding] = useState(false);
+  const [screen, setScreen] = useState<"onboarding" | "ready" | "main">("onboarding");
 
   const completedSteps = useMemo(() => {
     return [name.trim().length > 0, selectedChallenges.length > 0, stripeOptionsForBelt(belt).includes(stripes)];
@@ -46,7 +46,7 @@ export default function Home() {
       return;
     }
 
-    setDoneOnboarding(true);
+    setScreen("ready");
   };
 
   const goBack = () => {
@@ -61,8 +61,19 @@ export default function Home() {
     }
   };
 
-  if (doneOnboarding) {
+  if (screen === "main") {
     return <MainScreen name={name} />;
+  }
+
+  if (screen === "ready") {
+    return (
+      <ReadyScreen
+        name={name}
+        belt={belt}
+        stripes={stripes}
+        onContinue={() => setScreen("main")}
+      />
+    );
   }
 
   return (
@@ -330,6 +341,175 @@ function BeltPreview({ belt, stripes }: { belt: Belt; stripes: number }) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+function ReadyScreen({
+  name,
+  belt,
+  stripes,
+  onContinue,
+}: {
+  name: string;
+  belt: Belt;
+  stripes: number;
+  onContinue: () => void;
+}) {
+  const beltDescriptor = stripes > 0 ? `${belt} belt (${stripes} stripe${stripes === 1 ? "" : "s"})` : `${belt} belt`;
+
+  return (
+    <div className="relative min-h-screen bg-black text-white">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.22),transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_55%,rgba(255,255,255,0.08),transparent_55%)]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black via-black/75 to-black" />
+      </div>
+
+      <div className="relative mx-auto flex min-h-screen w-full max-w-3xl flex-col px-5 py-10 sm:px-8">
+        <main className="flex flex-1 flex-col justify-center gap-10 pb-4">
+          <div className="mx-auto grid place-items-center gap-6">
+            <div className="grid h-24 w-24 place-items-center rounded-[26px] bg-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.65)] ring-1 ring-white/15">
+              <FlowRollMark />
+            </div>
+            <div className="space-y-3 text-center">
+              <h1 className="text-4xl font-semibold leading-tight sm:text-5xl">
+                {name.trim() ? `${name.trim()}, ` : ""}FlowRoll is ready!
+              </h1>
+              <p className="mx-auto max-w-xl text-base leading-relaxed text-zinc-300 sm:text-lg">
+                As a {beltDescriptor}, we&apos;ll help you build a strong foundation and master the fundamentals.
+              </p>
+            </div>
+          </div>
+
+          <section className="mx-auto w-full max-w-xl">
+            <p className="text-center text-xs uppercase tracking-[0.35em] text-zinc-500">
+              Your path to mastery
+            </p>
+            <div className="mt-6 space-y-4">
+              <PathItem
+                title="Log sessions"
+                subtitle="Track every roll and sub"
+                icon={<BookIcon />}
+              />
+              <PathItem
+                title="Review techniques"
+                subtitle="Build your personal playbook"
+                icon={<FlowIcon />}
+              />
+              <PathItem
+                title="Improve 2x faster"
+                subtitle="Data-driven progress"
+                icon={<TrendIcon />}
+              />
+            </div>
+          </section>
+        </main>
+
+        <button
+          type="button"
+          onClick={onContinue}
+          className="h-16 w-full rounded-full bg-blue-600 text-lg font-semibold tracking-tight shadow-[0_10px_30px_rgba(59,130,246,0.45)] transition hover:bg-blue-500"
+        >
+          Continue
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PathItem({
+  title,
+  subtitle,
+  icon,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-5 py-4">
+      <div className="grid h-11 w-11 place-items-center rounded-full bg-blue-500/10 text-blue-200 ring-1 ring-blue-500/30">
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="text-lg font-semibold">{title}</p>
+        <p className="mt-0.5 text-sm text-zinc-400">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+function FlowRollMark() {
+  return (
+    <svg viewBox="0 0 64 64" className="h-12 w-12" aria-hidden="true">
+      <path
+        d="M18 40c6-12 14-18 24-18 5 0 9 1 12 4-6 1-10 4-13 8-4 6-10 9-18 9-2 0-4-1-5-3z"
+        fill="currentColor"
+        className="text-white"
+        opacity="0.95"
+      />
+      <path
+        d="M16 44c3 3 7 5 13 5 9 0 16-4 21-12 2-4 5-6 9-7-1 10-9 18-20 20-9 2-18-1-23-6z"
+        fill="currentColor"
+        className="text-blue-400"
+        opacity="0.95"
+      />
+      <circle cx="40" cy="18" r="6" fill="currentColor" className="text-blue-300" />
+    </svg>
+  );
+}
+
+function BookIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M7 4.5h10a2 2 0 0 1 2 2V19a1 1 0 0 1-1 1H7a3 3 0 0 0-3 3V7.5a3 3 0 0 1 3-3z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M7 4.5V20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function FlowIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M7 14c2.5-4.5 5-6 8-6 3 0 5 2 5 5 0 4-3 7-7 7-3.5 0-6-2.5-6-6z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4 12c.7-3.7 3.4-6.5 7.4-7.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function TrendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M4 16l6-6 4 4 6-7"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M14 7h6v6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
