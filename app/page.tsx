@@ -520,6 +520,10 @@ function MainScreen({ name }: { name: string }) {
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<TechniqueCategoryKey>("All");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [isTagsOpen, setIsTagsOpen] = useState(false);
+  const [tagDraftSelected, setTagDraftSelected] = useState<string[]>([]);
+  const [tagSearchQuery, setTagSearchQuery] = useState("");
 
   const fabRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -654,6 +658,33 @@ function MainScreen({ name }: { name: string }) {
     return techniques.filter((technique) => technique.category === selectedCategory);
   }, [selectedCategory]);
 
+  const openTags = () => {
+    setTagDraftSelected(selectedTags);
+    setTagSearchQuery("");
+    setIsTagsOpen(true);
+  };
+
+  const closeTags = () => {
+    setIsTagsOpen(false);
+    setTagSearchQuery("");
+    setTagDraftSelected([]);
+  };
+
+  const applyTags = () => {
+    setSelectedTags(tagDraftSelected);
+    closeTags();
+  };
+
+  const clearTagDraft = () => {
+    setTagDraftSelected([]);
+  };
+
+  const toggleTagDraft = (tag: string) => {
+    setTagDraftSelected((current) =>
+      current.includes(tag) ? current.filter((value) => value !== tag) : [...current, tag],
+    );
+  };
+
   const popover = useMemo(() => {
     if (!anchorRect) return null;
 
@@ -762,28 +793,46 @@ function MainScreen({ name }: { name: string }) {
               </button>
             </div>
 
-            <div className="mt-4 flex items-center justify-between">
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {selectedTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() =>
+                    setSelectedTags((current) => current.filter((value) => value !== tag))
+                  }
+                  className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-500"
+                  aria-label={`Remove tag ${tag}`}
+                >
+                  <span>{tag}</span>
+                  <span aria-hidden="true" className="text-white/90">
+                    ×
+                  </span>
+                </button>
+              ))}
               <button
                 ref={tagRef}
                 type="button"
+                onClick={openTags}
                 className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
               >
                 Add Tags <span className="ml-1 text-zinc-400">+</span>
               </button>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
-                >
-                  Graph
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
-                >
-                  New <ChevronDownSmallIcon />
-                </button>
-              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+              >
+                Graph
+              </button>
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+              >
+                New <ChevronDownSmallIcon />
+              </button>
             </div>
 
             <p className="mt-5 text-xs text-zinc-500">
@@ -840,6 +889,18 @@ function MainScreen({ name }: { name: string }) {
         </button>
 
         <BottomNav />
+
+        {isTagsOpen ? (
+          <TagPickerScreen
+            query={tagSearchQuery}
+            selected={tagDraftSelected}
+            onQueryChange={setTagSearchQuery}
+            onToggle={toggleTagDraft}
+            onClose={closeTags}
+            onClear={clearTagDraft}
+            onApply={applyTags}
+          />
+        ) : null}
 
         {isFilterOpen ? (
           <div className="fixed inset-0 z-40">
@@ -1019,6 +1080,120 @@ function BottomNav() {
           <ChartIcon />
           You
         </button>
+      </div>
+    </div>
+  );
+}
+
+const tagGroups = [
+  {
+    title: "Positions",
+    tags: ["Closed Guard", "Half Guard", "Side Control", "Mount", "Back Control"],
+  },
+  {
+    title: "Common Tags",
+    tags: ["Beginner", "Intermediate", "Advanced", "Gi", "No-Gi"],
+  },
+] as const;
+
+function TagPickerScreen({
+  query,
+  selected,
+  onQueryChange,
+  onToggle,
+  onClose,
+  onClear,
+  onApply,
+}: {
+  query: string;
+  selected: string[];
+  onQueryChange: (value: string) => void;
+  onToggle: (value: string) => void;
+  onClose: () => void;
+  onClear: () => void;
+  onApply: () => void;
+}) {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  return (
+    <div className="fixed inset-0 z-40 bg-black">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <p className="text-lg font-semibold text-white">Add Tags</p>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <XIcon />
+          </button>
+        </header>
+
+        <div className="mt-5 flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+          <SearchIcon />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search tags..."
+            className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+          />
+        </div>
+
+        <main className="mt-8 flex-1 space-y-10">
+          {tagGroups.map((group) => {
+            const visibleTags = group.tags.filter((tag) => {
+              if (!normalizedQuery) return true;
+              return tag.toLowerCase().includes(normalizedQuery);
+            });
+
+            if (visibleTags.length === 0) return null;
+
+            return (
+              <section key={group.title} className="space-y-3">
+                <p className="text-sm font-semibold text-zinc-300">{group.title}</p>
+                <div className="flex flex-wrap gap-3">
+                  {visibleTags.map((tag) => {
+                    const active = selected.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => onToggle(tag)}
+                        className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                          active
+                            ? "bg-blue-600 text-white"
+                            : "border border-white/10 bg-white/5 text-zinc-200 hover:bg-white/10"
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </main>
+
+        <footer className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/92 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-4 sm:px-8">
+            <button
+              type="button"
+              onClick={onClear}
+              className="h-12 flex-1 rounded-xl bg-white/10 text-sm font-semibold text-zinc-200 transition hover:bg-white/15"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={onApply}
+              className="h-12 flex-1 rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
+            >
+              Apply
+            </button>
+          </div>
+        </footer>
       </div>
     </div>
   );
