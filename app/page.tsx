@@ -535,6 +535,7 @@ function MainScreen({ name }: { name: string }) {
   const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([]);
   const [editingImportId, setEditingImportId] = useState<string | null>(null);
   const [isImportCategoryOpen, setIsImportCategoryOpen] = useState(false);
+  const [importReturnScreen, setImportReturnScreen] = useState<"list" | "add" | "edit">("list");
 
   const [draftTechnique, setDraftTechnique] = useState<TechniqueDraft | null>(null);
 
@@ -808,10 +809,11 @@ function MainScreen({ name }: { name: string }) {
     );
   };
 
-  const openImport = () => {
+  const openImportFrom = (returnTo: "list" | "add" | "edit") => {
     setImportText("");
     setCopiedPrompt(false);
     setLastCopiedPromptAt(null);
+    setImportReturnScreen(returnTo);
     setScreen("import");
   };
 
@@ -859,7 +861,7 @@ function MainScreen({ name }: { name: string }) {
     return (
       <AddTechniqueChoiceScreen
         onStartFresh={() => startNewTechniqueDraft()}
-        onImport={openImport}
+        onImport={() => openImportFrom("add")}
         onClose={() => setScreen("list")}
       />
     );
@@ -882,9 +884,9 @@ function MainScreen({ name }: { name: string }) {
           }
         }}
         onUseExample={() => setImportText(IMPORT_EXAMPLE_TEXT)}
-        onCancel={() => setScreen("list")}
+        onCancel={() => setScreen(importReturnScreen)}
         onImport={() => startReviewImportFromText(importText)}
-        onClose={() => setScreen("list")}
+        onClose={() => setScreen(importReturnScreen)}
       />
     );
   }
@@ -989,6 +991,7 @@ function MainScreen({ name }: { name: string }) {
         onSave={saveDraftTechnique}
         onDelete={() => deleteTechnique(draftTechnique.id)}
         onOpenTags={() => openTags("technique", draftTechnique.tags)}
+        onImport={() => openImportFrom("edit")}
       />
     );
   }
@@ -2366,6 +2369,7 @@ function TechniqueEditScreen({
   onSave,
   onDelete,
   onOpenTags,
+  onImport,
 }: {
   draft: TechniqueDraft;
   onDraftChange: (next: TechniqueDraft) => void;
@@ -2373,6 +2377,7 @@ function TechniqueEditScreen({
   onSave: () => void;
   onDelete: () => void;
   onOpenTags: () => void;
+  onImport: () => void;
 }) {
   const update = (patch: Partial<TechniqueDraft>) => onDraftChange({ ...draft, ...patch });
 
@@ -2408,9 +2413,21 @@ function TechniqueEditScreen({
             >
               <BackIcon />
             </button>
-            <p className="text-lg font-semibold text-white">Edit Technique</p>
+            <p className="text-lg font-semibold text-white">
+              {draft.isNew ? "Add Technique" : "Edit Technique"}
+            </p>
           </div>
           <div className="flex items-center gap-2">
+            {draft.isNew ? (
+              <button
+                type="button"
+                aria-label="Import"
+                onClick={onImport}
+                className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+              >
+                <ImportIcon />
+              </button>
+            ) : null}
             <button
               type="button"
               aria-label="Favorite"
@@ -2419,14 +2436,16 @@ function TechniqueEditScreen({
             >
               <StarIcon filled={draft.favorite} />
             </button>
-            <button
-              type="button"
-              aria-label="Delete"
-              onClick={onDelete}
-              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
-            >
-              <TrashIcon />
-            </button>
+            {!draft.isNew ? (
+              <button
+                type="button"
+                aria-label="Delete"
+                onClick={onDelete}
+                className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+              >
+                <TrashIcon />
+              </button>
+            ) : null}
           </div>
         </header>
 
@@ -2596,7 +2615,7 @@ function TechniqueEditScreen({
               onClick={onSave}
               className="h-12 flex-1 rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
             >
-              Save
+              {draft.isNew ? "Add" : "Save"}
             </button>
           </div>
         </footer>
