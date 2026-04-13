@@ -514,7 +514,7 @@ function TrendIcon() {
 }
 
 function MainScreen({ name }: { name: string }) {
-  const [screen, setScreen] = useState<"list" | "detail" | "edit" | "add" | "import">("list");
+  const [screen, setScreen] = useState<"list" | "detail" | "edit" | "add" | "import" | "review">("list");
   const [activeTechniqueId, setActiveTechniqueId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"library" | "systems" | "discover">("library");
   const [showTour, setShowTour] = useState(false);
@@ -532,6 +532,9 @@ function MainScreen({ name }: { name: string }) {
   const [importText, setImportText] = useState("");
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [lastCopiedPromptAt, setLastCopiedPromptAt] = useState<number | null>(null);
+  const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([]);
+  const [editingImportId, setEditingImportId] = useState<string | null>(null);
+  const [isImportCategoryOpen, setIsImportCategoryOpen] = useState(false);
 
   const [draftTechnique, setDraftTechnique] = useState<TechniqueDraft | null>(null);
 
@@ -812,12 +815,19 @@ function MainScreen({ name }: { name: string }) {
     setScreen("import");
   };
 
-  const importTechniquesFromText = (text: string) => {
+  const startReviewImportFromText = (text: string) => {
     const parsed = parseTechniqueImport(text);
     if (parsed.length === 0) return;
 
-    setTechniques((current) => [...parsed, ...current]);
-    setScreen("list");
+    setImportCandidates(
+      parsed.map((technique) => ({
+        ...technique,
+        selected: true,
+      })),
+    );
+    setEditingImportId(null);
+    setIsImportCategoryOpen(false);
+    setScreen("review");
   };
 
   const popover = useMemo(() => {
@@ -873,8 +883,85 @@ function MainScreen({ name }: { name: string }) {
         }}
         onUseExample={() => setImportText(IMPORT_EXAMPLE_TEXT)}
         onCancel={() => setScreen("list")}
-        onImport={() => importTechniquesFromText(importText)}
+        onImport={() => startReviewImportFromText(importText)}
         onClose={() => setScreen("list")}
+      />
+    );
+  }
+
+  if (screen === "review") {
+    const selectedCount = importCandidates.filter((candidate) => candidate.selected).length;
+
+    return (
+      <ReviewAndSaveScreen
+        candidates={importCandidates}
+        editingId={editingImportId}
+        isCategoryOpen={isImportCategoryOpen}
+        onClose={() => {
+          setImportCandidates([]);
+          setEditingImportId(null);
+          setIsImportCategoryOpen(false);
+          setScreen("list");
+        }}
+        onBack={() => setScreen("import")}
+        onSelectAll={() =>
+          setImportCandidates((current) => current.map((candidate) => ({ ...candidate, selected: true })))
+        }
+        onSelectNone={() =>
+          setImportCandidates((current) => current.map((candidate) => ({ ...candidate, selected: false })))
+        }
+        onToggleSelected={(id) =>
+          setImportCandidates((current) =>
+            current.map((candidate) =>
+              candidate.id === id ? { ...candidate, selected: !candidate.selected } : candidate,
+            ),
+          )
+        }
+        onStartEdit={(id) => {
+          setEditingImportId(id);
+          setIsImportCategoryOpen(false);
+        }}
+        onCancelEdit={() => {
+          setEditingImportId(null);
+          setIsImportCategoryOpen(false);
+        }}
+        onChange={(id, patch) =>
+          setImportCandidates((current) =>
+            current.map((candidate) => (candidate.id === id ? { ...candidate, ...patch } : candidate)),
+          )
+        }
+        onOpenCategory={() => setIsImportCategoryOpen(true)}
+        onCloseCategory={() => setIsImportCategoryOpen(false)}
+        onPickCategory={(category) => {
+          if (!editingImportId) return;
+          setImportCandidates((current) =>
+            current.map((candidate) =>
+              candidate.id === editingImportId ? { ...candidate, category } : candidate,
+            ),
+          );
+          setIsImportCategoryOpen(false);
+        }}
+        onSaveEdit={() => setEditingImportId(null)}
+        onSaveAll={() => {
+          if (selectedCount === 0) return;
+          setTechniques((current) => {
+            const existingTitles = new Set(current.map((technique) => technique.title.trim().toLowerCase()));
+            const toAdd: Technique[] = importCandidates
+              .filter((candidate) => candidate.selected)
+              .filter((candidate) => !existingTitles.has(candidate.title.trim().toLowerCase()))
+              .map((candidate) => {
+                const technique = { ...candidate } as Record<string, unknown>;
+                delete technique.selected;
+                return technique as unknown as Technique;
+              });
+            return [...toAdd, ...current];
+          });
+
+          setImportCandidates([]);
+          setEditingImportId(null);
+          setIsImportCategoryOpen(false);
+          setScreen("list");
+        }}
       />
     );
   }
@@ -1651,6 +1738,241 @@ function StepBadge({ number }: { number: number }) {
   );
 }
 
+function ReviewAndSaveScreen({
+  candidates,
+  editingId,
+  isCategoryOpen,
+  onClose,
+  onBack,
+  onSelectAll,
+  onSelectNone,
+  onToggleSelected,
+  onStartEdit,
+  onCancelEdit,
+  onChange,
+  onOpenCategory,
+  onCloseCategory,
+  onPickCategory,
+  onSaveEdit,
+  onSaveAll,
+}: {
+  candidates: ImportCandidate[];
+  editingId: string | null;
+  isCategoryOpen: boolean;
+  onClose: () => void;
+  onBack: () => void;
+  onSelectAll: () => void;
+  onSelectNone: () => void;
+  onToggleSelected: (id: string) => void;
+  onStartEdit: (id: string) => void;
+  onCancelEdit: () => void;
+  onChange: (id: string, patch: Partial<Pick<Technique, "title" | "notes">>) => void;
+  onOpenCategory: () => void;
+  onCloseCategory: () => void;
+  onPickCategory: (category: Exclude<TechniqueCategoryKey, "All">) => void;
+  onSaveEdit: () => void;
+  onSaveAll: () => void;
+}) {
+  const selectedCount = candidates.filter((candidate) => candidate.selected).length;
+  const editing = editingId ? candidates.find((candidate) => candidate.id === editingId) ?? null : null;
+
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-600/15 text-blue-200 ring-1 ring-blue-500/30">
+              <ImportIcon />
+            </span>
+            <p className="text-lg font-semibold">Review &amp; Save</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <XIcon />
+          </button>
+        </header>
+
+        <div className="mt-5 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-zinc-200">
+              {candidates.length} technique{candidates.length === 1 ? "" : "s"} found
+            </p>
+            <p className="mt-1 text-sm text-zinc-500">
+              {selectedCount} selected for import
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onSelectAll}
+              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={onSelectNone}
+              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+            >
+              None
+            </button>
+          </div>
+        </div>
+
+        <main className="mt-6 flex-1 space-y-4">
+          {candidates.map((candidate) => {
+            const isEditing = candidate.id === editingId;
+            const categoryDot = categoryDotClass(candidate.category);
+
+            return (
+              <div
+                key={candidate.id}
+                className={`rounded-2xl border border-white/10 bg-white/5 ${
+                  isEditing ? "ring-1 ring-white/10" : ""
+                }`}
+              >
+                <div className="flex items-start justify-between gap-4 px-5 py-4">
+                  <button
+                    type="button"
+                    aria-label={candidate.selected ? "Deselect technique" : "Select technique"}
+                    onClick={() => onToggleSelected(candidate.id)}
+                    className={`mt-0.5 grid h-7 w-7 place-items-center rounded-full border transition ${
+                      candidate.selected
+                        ? "border-blue-500 bg-blue-600 text-white"
+                        : "border-white/20 bg-black/20 text-transparent hover:bg-white/5"
+                    }`}
+                  >
+                    ✓
+                  </button>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-zinc-100">{candidate.title}</p>
+                    {!isEditing ? (
+                      <>
+                        <div className="mt-2 flex items-center gap-2">
+                          <span
+                            className={`rounded-full px-3 py-1 text-[11px] font-semibold ${categoryPillClass(
+                              candidate.category,
+                            )}`}
+                          >
+                            {candidate.category}
+                          </span>
+                        </div>
+                        <p className="mt-2 max-h-10 overflow-hidden text-sm text-zinc-400">
+                          {candidate.notes || "No notes"}
+                        </p>
+                      </>
+                    ) : (
+                      <div className="mt-4 space-y-4">
+                        <div className="space-y-2">
+                          <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Name</p>
+                          <input
+                            value={candidate.title}
+                            onChange={(event) => onChange(candidate.id, { title: event.target.value })}
+                            className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Category</p>
+                          <button
+                            type="button"
+                            onClick={onOpenCategory}
+                            className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-left"
+                          >
+                            <span className="flex items-center gap-3">
+                              <span className={`h-3 w-3 rounded-full ${categoryDot}`} aria-hidden="true" />
+                              <span className="text-sm font-semibold text-zinc-200">{candidate.category}</span>
+                            </span>
+                            <ChevronDownSmallIcon />
+                          </button>
+                        </div>
+
+                        <div className="space-y-2">
+                          <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Notes</p>
+                          <textarea
+                            value={candidate.notes}
+                            onChange={(event) => onChange(candidate.id, { notes: event.target.value })}
+                            className="min-h-[120px] w-full resize-none rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-600"
+                          />
+                          <p className="text-right text-xs text-zinc-500">
+                            {candidate.notes.length}/2000
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={onCancelEdit}
+                            className="rounded-xl bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/15"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={onSaveEdit}
+                            className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-blue-500"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {!isEditing ? (
+                    <button
+                      type="button"
+                      aria-label="Edit technique"
+                      onClick={() => onStartEdit(candidate.id)}
+                      className="grid h-9 w-9 place-items-center rounded-full bg-white text-black transition hover:bg-zinc-200"
+                    >
+                      <PencilIcon />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </main>
+
+        <footer className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/92 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-4 sm:px-8">
+            <button
+              type="button"
+              onClick={onBack}
+              className="h-12 flex-1 rounded-xl bg-white/10 text-sm font-semibold text-zinc-200 transition hover:bg-white/15"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={onSaveAll}
+              disabled={selectedCount === 0}
+              className="h-12 flex-1 rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+            >
+              Save
+            </button>
+          </div>
+        </footer>
+
+        {isCategoryOpen && editing ? (
+          <CategoryPickerModal
+            title="Select Category"
+            selected={editing.category}
+            onClose={onCloseCategory}
+            onPick={onPickCategory}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 type TechniqueCategoryKey =
   | "All"
   | "Submission"
@@ -1659,7 +1981,8 @@ type TechniqueCategoryKey =
   | "Guard Pass"
   | "Guard"
   | "Control"
-  | "Escape";
+  | "Escape"
+  | "Defense";
 
 const techniqueCategories: Array<{ key: TechniqueCategoryKey; label: string; dot: string }> = [
   { key: "All", label: "All", dot: "bg-zinc-400" },
@@ -1670,6 +1993,7 @@ const techniqueCategories: Array<{ key: TechniqueCategoryKey; label: string; dot
   { key: "Guard", label: "Guard", dot: "bg-green-500" },
   { key: "Control", label: "Control", dot: "bg-pink-500" },
   { key: "Escape", label: "Escape", dot: "bg-yellow-400" },
+  { key: "Defense", label: "Defense", dot: "bg-violet-500" },
 ];
 
 type TechniqueLink = {
@@ -1690,6 +2014,8 @@ type Technique = {
 };
 
 type TechniqueDraft = Technique & { isNew?: boolean };
+
+type ImportCandidate = Technique & { selected: boolean };
 
 const createDefaultTechnique = (): Technique => ({
   id: "triangle-choke",
@@ -1810,6 +2136,86 @@ function categoryDotClass(category: Exclude<TechniqueCategoryKey, "All">) {
   return (
     techniqueCategories.find((entry) => entry.key === category)?.dot ??
     "bg-zinc-400"
+  );
+}
+
+function categoryPillClass(category: Exclude<TechniqueCategoryKey, "All">) {
+  if (category === "Submission") return "bg-red-500 text-white";
+  if (category === "Sweep") return "bg-orange-500 text-white";
+  if (category === "Takedown") return "bg-violet-500 text-white";
+  if (category === "Guard Pass") return "bg-blue-500 text-white";
+  if (category === "Guard") return "bg-green-600 text-white";
+  if (category === "Control") return "bg-pink-500 text-white";
+  if (category === "Escape") return "bg-emerald-500 text-white";
+  if (category === "Defense") return "bg-indigo-500 text-white";
+  return "bg-zinc-600 text-white";
+}
+
+function CategoryPickerModal({
+  title,
+  selected,
+  onClose,
+  onPick,
+}: {
+  title: string;
+  selected: Exclude<TechniqueCategoryKey, "All">;
+  onClose: () => void;
+  onPick: (category: Exclude<TechniqueCategoryKey, "All">) => void;
+}) {
+  const categories = techniqueCategories
+    .filter((entry) => entry.key !== "All")
+    .map((entry) => entry as { key: Exclude<TechniqueCategoryKey, "All">; label: string; dot: string });
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        aria-label="Close category picker"
+        className="absolute inset-0 bg-black/65"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="absolute left-1/2 top-[180px] w-[min(92vw,420px)] -translate-x-1/2 overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 shadow-[0_30px_90px_rgba(0,0,0,0.8)]"
+      >
+        <div className="px-6 py-5">
+          <p className="text-center text-base font-semibold text-white">{title}</p>
+        </div>
+        <div className="border-t border-white/10">
+          {categories.map((category) => {
+            const active = category.key === selected;
+            return (
+              <button
+                key={category.key}
+                type="button"
+                onClick={() => onPick(category.key)}
+                className={`flex w-full items-center justify-between gap-4 px-6 py-4 text-left transition ${
+                  active ? "bg-blue-600/25 text-blue-200" : "text-white hover:bg-white/5"
+                }`}
+              >
+                <span className="flex items-center gap-3">
+                  <span className={`h-3 w-3 rounded-full ${category.dot}`} aria-hidden="true" />
+                  <span className={`text-sm font-semibold ${active ? "text-blue-200" : "text-white"}`}>
+                    {category.label}
+                  </span>
+                </span>
+                {active ? (
+                  <span className="text-blue-200" aria-hidden="true">
+                    ✓
+                  </span>
+                ) : (
+                  <span className="text-transparent" aria-hidden="true">
+                    ✓
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
