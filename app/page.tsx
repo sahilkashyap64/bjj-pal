@@ -2,26 +2,13 @@
 
 import { useMemo, useState } from "react";
 
-type Rank = {
-  belt: string;
-  stripes: number;
-};
+const belts = ["White", "Blue", "Purple", "Brown", "Black"] as const;
+type Belt = (typeof belts)[number];
 
-const ranks: Rank[] = [
-  { belt: "White", stripes: 0 },
-  { belt: "White", stripes: 1 },
-  { belt: "White", stripes: 2 },
-  { belt: "White", stripes: 3 },
-  { belt: "White", stripes: 4 },
-  { belt: "Blue", stripes: 0 },
-  { belt: "Blue", stripes: 1 },
-  { belt: "Blue", stripes: 2 },
-  { belt: "Blue", stripes: 3 },
-  { belt: "Blue", stripes: 4 },
-  { belt: "Purple", stripes: 0 },
-  { belt: "Brown", stripes: 0 },
-  { belt: "Black", stripes: 0 },
-];
+const stripeOptionsForBelt = (belt: Belt): number[] => {
+  if (belt === "Black") return [0];
+  return [0, 1, 2, 3, 4];
+};
 
 const challenges = [
   "Can't remember techniques",
@@ -34,14 +21,14 @@ const challenges = [
 export default function Home() {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
-  const [rankIndex, setRankIndex] = useState(0);
+  const [belt, setBelt] = useState<Belt>("White");
+  const [stripes, setStripes] = useState(0);
   const [selectedChallenges, setSelectedChallenges] = useState<string[]>([]);
   const [doneOnboarding, setDoneOnboarding] = useState(false);
 
-  const activeRank = ranks[rankIndex];
   const completedSteps = useMemo(() => {
-    return [name.trim().length > 0, rankIndex >= 0, selectedChallenges.length > 0];
-  }, [name, rankIndex, selectedChallenges.length]);
+    return [name.trim().length > 0, selectedChallenges.length > 0, stripeOptionsForBelt(belt).includes(stripes)];
+  }, [belt, name, selectedChallenges.length, stripes]);
 
   const canContinue = completedSteps[step] ?? false;
 
@@ -64,6 +51,14 @@ export default function Home() {
 
   const goBack = () => {
     setStep((current) => Math.max(0, current - 1));
+  };
+
+  const setBeltSafely = (nextBelt: Belt) => {
+    setBelt(nextBelt);
+    const allowedStripes = stripeOptionsForBelt(nextBelt);
+    if (!allowedStripes.includes(stripes)) {
+      setStripes(allowedStripes[0]);
+    }
   };
 
   if (doneOnboarding) {
@@ -102,19 +97,15 @@ export default function Home() {
               <NameStep name={name} onChange={setName} />
             ) : null}
             {step === 1 ? (
-              <RankStep
-                name={name}
-                rank={activeRank}
-                onPrev={() => setRankIndex((value) => Math.max(0, value - 1))}
-                onNext={() =>
-                  setRankIndex((value) => Math.min(ranks.length - 1, value + 1))
-                }
-              />
+              <ChallengeStep selected={selectedChallenges} onToggle={toggleChallenge} />
             ) : null}
             {step === 2 ? (
-              <ChallengeStep
-                selected={selectedChallenges}
-                onToggle={toggleChallenge}
+              <RankStep
+                name={name}
+                belt={belt}
+                stripes={stripes}
+                onBeltChange={setBeltSafely}
+                onStripesChange={setStripes}
               />
             ) : null}
           </section>
@@ -123,7 +114,7 @@ export default function Home() {
             type="button"
             onClick={goNext}
             disabled={!canContinue}
-            className="h-16 w-full rounded-full bg-blue-600 text-3xl font-semibold tracking-tight shadow-[0_10px_30px_rgba(59,130,246,0.45)] transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300 disabled:shadow-none"
+            className="h-16 w-full rounded-full bg-blue-600 text-lg font-semibold tracking-tight shadow-[0_10px_30px_rgba(59,130,246,0.45)] transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300 disabled:shadow-none"
           >
             Continue
           </button>
@@ -160,40 +151,70 @@ function NameStep({
 
 function RankStep({
   name,
-  rank,
-  onPrev,
-  onNext,
+  belt,
+  stripes,
+  onBeltChange,
+  onStripesChange,
 }: {
   name: string;
-  rank: Rank;
-  onPrev: () => void;
-  onNext: () => void;
+  belt: Belt;
+  stripes: number;
+  onBeltChange: (value: Belt) => void;
+  onStripesChange: (value: number) => void;
 }) {
+  const stripeOptions = stripeOptionsForBelt(belt);
+
   return (
     <div className="space-y-12 pt-8">
       <h1 className="mx-auto max-w-3xl text-center text-4xl font-semibold leading-tight sm:text-5xl">
         Hi <span className="text-blue-500">{name || "there"}</span>, what&apos;s your current rank?
       </h1>
 
-      <div className="mx-auto w-full max-w-xl rounded-2xl border border-white/10 bg-zinc-900/80 p-8">
-        <p className="text-center text-4xl font-bold tracking-wide">{rank.belt} Belt</p>
-        <p className="mt-3 text-center text-2xl text-zinc-300">Stripes: {rank.stripes}</p>
+      <div className="mx-auto w-full max-w-2xl space-y-10">
+        <BeltPreview belt={belt} stripes={stripes} />
 
-        <div className="mt-8 flex items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={onPrev}
-            className="h-12 flex-1 rounded-xl border border-white/20 bg-black/40 text-lg"
-          >
-            Previous
-          </button>
-          <button
-            type="button"
-            onClick={onNext}
-            className="h-12 flex-1 rounded-xl bg-white text-lg font-semibold text-black"
-          >
-            Next Rank
-          </button>
+        <div className="grid grid-cols-2 gap-10 px-2 sm:px-6">
+          <div className="space-y-4">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Belt</p>
+            <div className="space-y-2">
+              {belts.map((option) => {
+                const active = option === belt;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => onBeltChange(option)}
+                    className={`w-full rounded-xl px-4 py-3 text-left text-lg transition ${
+                      active ? "bg-blue-500/15 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+                    }`}
+                  >
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Stripes</p>
+            <div className="space-y-2">
+              {stripeOptions.map((count) => {
+                const active = stripes === count;
+                return (
+                  <button
+                    key={count}
+                    type="button"
+                    onClick={() => onStripesChange(count)}
+                    className={`w-full rounded-xl px-4 py-3 text-left text-lg transition ${
+                      active ? "bg-blue-500/15 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+                    }`}
+                  >
+                    {count}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -213,7 +234,7 @@ function ChallengeStep({
         What are your biggest BJJ challenges?
       </h1>
 
-      <div className="mx-auto mt-8 max-w-3xl space-y-3">
+      <div className="mx-auto mt-10 max-w-3xl divide-y divide-white/10 overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/30">
         {challenges.map((challenge) => {
           const active = selected.includes(challenge);
 
@@ -222,16 +243,12 @@ function ChallengeStep({
               key={challenge}
               type="button"
               onClick={() => onToggle(challenge)}
-              className={`flex w-full items-center justify-between rounded-xl border px-5 py-4 text-left text-xl transition ${
-                active
-                  ? "border-blue-500 bg-blue-500/10"
-                  : "border-white/10 bg-zinc-900/60 hover:border-white/30"
-              }`}
+              className="flex w-full items-center justify-between gap-6 px-5 py-5 text-left text-xl transition hover:bg-white/5"
             >
-              <span>{challenge}</span>
+              <span className={active ? "text-white" : "text-zinc-300"}>{challenge}</span>
               <span
-                className={`grid h-8 w-8 place-items-center rounded-full text-sm ${
-                  active ? "bg-blue-500 text-black" : "bg-zinc-700 text-zinc-300"
+                className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-base transition ${
+                  active ? "bg-blue-500 text-black" : "bg-zinc-800 text-zinc-300"
                 }`}
               >
                 ✓
@@ -239,6 +256,78 @@ function ChallengeStep({
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function BeltPreview({ belt, stripes }: { belt: Belt; stripes: number }) {
+  const palette: Record<
+    Belt,
+    { bg: string; edge: string; stripe: string; label: string; text: string }
+  > = {
+    White: {
+      bg: "bg-zinc-100",
+      edge: "bg-zinc-200",
+      stripe: "bg-zinc-900",
+      label: "WHITE BELT",
+      text: "text-zinc-900",
+    },
+    Blue: {
+      bg: "bg-blue-600",
+      edge: "bg-blue-700",
+      stripe: "bg-white",
+      label: "BLUE BELT",
+      text: "text-white",
+    },
+    Purple: {
+      bg: "bg-purple-600",
+      edge: "bg-purple-700",
+      stripe: "bg-white",
+      label: "PURPLE BELT",
+      text: "text-white",
+    },
+    Brown: {
+      bg: "bg-amber-900",
+      edge: "bg-amber-950",
+      stripe: "bg-white",
+      label: "BROWN BELT",
+      text: "text-white",
+    },
+    Black: {
+      bg: "bg-zinc-950",
+      edge: "bg-black",
+      stripe: "bg-white",
+      label: "BLACK BELT",
+      text: "text-white",
+    },
+  };
+
+  const style = palette[belt];
+
+  return (
+    <div className="mx-auto w-full max-w-3xl">
+      <div className="relative mx-auto h-16 w-full max-w-2xl overflow-hidden rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.55)]">
+        <div className={`absolute inset-0 ${style.bg}`} />
+        <div className={`absolute right-0 top-0 h-full w-14 ${style.edge}`} />
+        <div className="absolute right-14 top-0 h-full w-0.5 bg-black/15" />
+
+        <div className="absolute inset-0 flex items-center justify-center px-6">
+          <span className={`text-sm font-semibold tracking-[0.3em] ${style.text}`}>
+            {style.label}
+          </span>
+        </div>
+
+        {stripes > 0 ? (
+          <div className="absolute right-20 top-1/2 flex -translate-y-1/2 items-center gap-2">
+            {Array.from({ length: stripes }).map((_, index) => (
+              <span
+                key={`${belt}-${index + 1}`}
+                className={`h-10 w-1.5 rounded-full shadow-sm ${style.stripe}`}
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );
