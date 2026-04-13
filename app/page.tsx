@@ -514,7 +514,7 @@ function TrendIcon() {
 }
 
 function MainScreen({ name }: { name: string }) {
-  const [screen, setScreen] = useState<"list" | "detail" | "edit">("list");
+  const [screen, setScreen] = useState<"list" | "detail" | "edit" | "add" | "import">("list");
   const [activeTechniqueId, setActiveTechniqueId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"library" | "systems" | "discover">("library");
   const [showTour, setShowTour] = useState(false);
@@ -529,6 +529,9 @@ function MainScreen({ name }: { name: string }) {
   const [tagPickerContext, setTagPickerContext] = useState<"filter" | "technique">("filter");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedTechniqueId, setExpandedTechniqueId] = useState<string | null>(null);
+  const [importText, setImportText] = useState("");
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [lastCopiedPromptAt, setLastCopiedPromptAt] = useState<number | null>(null);
 
   const [draftTechnique, setDraftTechnique] = useState<TechniqueDraft | null>(null);
 
@@ -615,6 +618,12 @@ function MainScreen({ name }: { name: string }) {
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (!lastCopiedPromptAt) return;
+    const timeout = window.setTimeout(() => setCopiedPrompt(false), 1500);
+    return () => window.clearTimeout(timeout);
+  }, [lastCopiedPromptAt]);
 
   useEffect(() => {
     if (!showTour) return;
@@ -738,6 +747,10 @@ function MainScreen({ name }: { name: string }) {
   };
 
   const startNewTechnique = () => {
+    setScreen("add");
+  };
+
+  const startNewTechniqueDraft = () => {
     const nowIso = new Date().toISOString();
     setDraftTechnique({
       id: `tech-${cryptoSafeId()}`,
@@ -792,6 +805,21 @@ function MainScreen({ name }: { name: string }) {
     );
   };
 
+  const openImport = () => {
+    setImportText("");
+    setCopiedPrompt(false);
+    setLastCopiedPromptAt(null);
+    setScreen("import");
+  };
+
+  const importTechniquesFromText = (text: string) => {
+    const parsed = parseTechniqueImport(text);
+    if (parsed.length === 0) return;
+
+    setTechniques((current) => [...parsed, ...current]);
+    setScreen("list");
+  };
+
   const popover = useMemo(() => {
     if (!anchorRect) return null;
 
@@ -816,6 +844,40 @@ function MainScreen({ name }: { name: string }) {
 
     return { left, top, width, arrowLeft, placeBelow };
   }, [anchorRect]);
+
+  if (screen === "add") {
+    return (
+      <AddTechniqueChoiceScreen
+        onStartFresh={() => startNewTechniqueDraft()}
+        onImport={openImport}
+        onClose={() => setScreen("list")}
+      />
+    );
+  }
+
+  if (screen === "import") {
+    return (
+      <ImportTechniquesScreen
+        promptText={IMPORT_PROMPT_TEXT}
+        importText={importText}
+        onImportTextChange={setImportText}
+        copiedPrompt={copiedPrompt}
+        onCopyPrompt={async () => {
+          try {
+            await navigator.clipboard.writeText(IMPORT_PROMPT_TEXT);
+            setCopiedPrompt(true);
+            setLastCopiedPromptAt(Date.now());
+          } catch {
+            setCopiedPrompt(false);
+          }
+        }}
+        onUseExample={() => setImportText(IMPORT_EXAMPLE_TEXT)}
+        onCancel={() => setScreen("list")}
+        onImport={() => importTechniquesFromText(importText)}
+        onClose={() => setScreen("list")}
+      />
+    );
+  }
 
   if (screen === "detail" && activeTechnique) {
     return (
@@ -1369,6 +1431,226 @@ function TagPickerScreen({
   );
 }
 
+function AddTechniqueChoiceScreen({
+  onImport,
+  onStartFresh,
+  onClose,
+}: {
+  onImport: () => void;
+  onStartFresh: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <div className="relative mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-16 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200">
+              <UserIcon />
+            </div>
+            <p className="text-lg font-semibold">You</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <XIcon />
+          </button>
+        </header>
+
+        <main className="mt-16 flex flex-1 flex-col items-center justify-center text-center">
+          <div className="grid h-20 w-20 place-items-center rounded-full bg-blue-600/20 text-blue-200 ring-1 ring-blue-500/30">
+            <ImportIcon />
+          </div>
+          <h1 className="mt-10 text-4xl font-semibold">Import Your Notes</h1>
+          <p className="mt-4 max-w-md text-sm leading-relaxed text-zinc-400">
+            Already have techniques written down? Import them instantly and start tracking right away.
+          </p>
+
+          <button
+            type="button"
+            onClick={onImport}
+            className="mt-12 inline-flex h-14 w-full max-w-sm items-center justify-center gap-3 rounded-full bg-blue-600 px-6 text-base font-semibold text-white shadow-[0_10px_30px_rgba(59,130,246,0.45)] transition hover:bg-blue-500"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-white/15">
+              <ImportIcon />
+            </span>
+            Import Techniques
+          </button>
+          <button
+            type="button"
+            onClick={onStartFresh}
+            className="mt-3 h-12 w-full max-w-sm rounded-full bg-white px-6 text-sm font-semibold text-black transition hover:bg-zinc-200"
+          >
+            Start Fresh
+          </button>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function ImportTechniquesScreen({
+  promptText,
+  importText,
+  onImportTextChange,
+  copiedPrompt,
+  onCopyPrompt,
+  onUseExample,
+  onCancel,
+  onImport,
+  onClose,
+}: {
+  promptText: string;
+  importText: string;
+  onImportTextChange: (value: string) => void;
+  copiedPrompt: boolean;
+  onCopyPrompt: () => void | Promise<void>;
+  onUseExample: () => void;
+  onCancel: () => void;
+  onImport: () => void;
+  onClose: () => void;
+}) {
+  const parsedCount = useMemo(() => parseTechniqueImport(importText).length, [importText]);
+
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-600/15 text-blue-200 ring-1 ring-blue-500/30">
+              <ImportIcon />
+            </span>
+            <p className="text-lg font-semibold">Import Techniques</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <XIcon />
+          </button>
+        </header>
+
+        <p className="mt-4 text-sm text-zinc-500">
+          Follow these 3 simple steps to import your notes:
+        </p>
+        <div className="mt-4 border-t border-white/10" />
+
+        <main className="mt-6 flex-1 space-y-6">
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-5">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <StepBadge number={1} />
+                <p className="text-sm font-semibold">Copy the ChatGPT Prompt</p>
+              </div>
+              <button
+                type="button"
+                onClick={onCopyPrompt}
+                className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black transition hover:bg-zinc-200"
+              >
+                <CopyIcon />
+                {copiedPrompt ? "Copied" : "Copy Prompt"}
+              </button>
+            </div>
+            <div className="mt-4 rounded-xl border border-white/10 bg-black/40 p-4 text-xs text-zinc-300 whitespace-pre-wrap">
+              {promptText}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-5">
+            <div className="flex items-center gap-3">
+              <StepBadge number={2} />
+              <p className="text-sm font-semibold">Go to ChatGPT</p>
+            </div>
+            <ul className="mt-4 space-y-2 text-sm text-zinc-400">
+              <li className="flex items-start gap-3">
+                <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-zinc-500" />
+                Paste the copied prompt
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-zinc-500" />
+                Add your technique notes below it
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-zinc-500" />
+                Press Enter to get formatted results
+              </li>
+            </ul>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-5">
+            <div className="flex items-center gap-3">
+              <StepBadge number={3} />
+              <p className="text-sm font-semibold">Paste the Formatted Results</p>
+            </div>
+
+            <div className="mt-4">
+              <textarea
+                value={importText}
+                onChange={(event) => onImportTextChange(event.target.value)}
+                placeholder="Paste ChatGPT’s formatted results here..."
+                className="min-h-[180px] w-full resize-none rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-600"
+              />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <p className="text-xs text-zinc-500">{importText.length} characters</p>
+                <button
+                  type="button"
+                  onClick={onUseExample}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+                >
+                  <LightningIcon />
+                  Use Example
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <section className="space-y-3">
+            <p className="text-sm font-semibold text-zinc-200">Expected Format</p>
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-sm text-zinc-400">
+              <p>• Triangle Choke - Setup from closed guard</p>
+              <p className="mt-1">• Armbar from Mount - Isolate arm, pivot hips</p>
+              <p className="mt-1">• Kimura - Americana grip, control wrist</p>
+            </div>
+          </section>
+        </main>
+
+        <footer className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/92 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-4 sm:px-8">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="h-12 flex-1 rounded-xl bg-white/10 text-sm font-semibold text-zinc-200 transition hover:bg-white/15"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onImport}
+              disabled={parsedCount === 0}
+              className="h-12 flex-1 rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+            >
+              Import{parsedCount > 0 ? ` (${parsedCount})` : ""}
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function StepBadge({ number }: { number: number }) {
+  return (
+    <span className="grid h-7 w-7 place-items-center rounded-full bg-blue-600/20 text-xs font-bold text-blue-200 ring-1 ring-blue-500/30">
+      {number}
+    </span>
+  );
+}
+
 type TechniqueCategoryKey =
   | "All"
   | "Submission"
@@ -1427,6 +1709,28 @@ const createDefaultTechnique = (): Technique => ({
   favorite: false,
 });
 
+const IMPORT_EXAMPLE_TEXT = `• Triangle Choke - Setup from closed guard, control arm and head, squeeze knees together
+• Armbar from Mount - Isolate the arm, pivot hips over, step over head for finishing angle
+• Kimura - Americana grip, control wrist and elbow, step over for leverage
+• Hip Escape - Fundamental side control escape, create frames, shrimp movement
+• Scissor Sweep - Timing is crucial, off-balance opponent, use leg as fulcrum
+• Double Leg Takedown - Level change, penetration step, drive through opponent
+• Knee Slice Pass - Pressure and angle, control far hip, slice through guard`;
+
+const IMPORT_PROMPT_TEXT = `Using this exact format where every technique starts with a bullet point and is followed by a dash and notes:
+
+• Triangle Choke - Setup from closed guard, control arm and head, squeeze knees together
+• Armbar from Mount - Isolate the arm, pivot hips over, step over head for finishing angle
+• Kimura - Americana grip, control wrist and elbow, step over for leverage
+• Hip Escape - Fundamental side control escape, create frames, shrimp movement
+• Scissor Sweep - Timing is crucial, off-balance opponent, use leg as fulcrum
+• Double Leg Takedown - Level change, penetration step, drive through opponent
+• Knee Slice Pass - Pressure and angle, control far hip, slice through guard
+
+Convert the following BJJ notes to this format. Each line should be: • [Technique Name] - [Notes/Description]
+
+Paste your notes here:`;
+
 const cryptoSafeId = () => {
   try {
     return crypto.randomUUID();
@@ -1436,6 +1740,47 @@ const cryptoSafeId = () => {
 };
 
 const dedupeStrings = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+
+function parseTechniqueImport(text: string): Technique[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const techniques: Technique[] = [];
+  const seenTitles = new Set<string>();
+  const nowIso = new Date().toISOString();
+
+  for (const line of lines) {
+    const normalized = line
+      .replace(/^[•*-]\s*/, "")
+      .replace(/^\u2022\s*/, "")
+      .trim();
+    if (!normalized) continue;
+
+    const dashIndex = normalized.indexOf(" - ");
+    const title = (dashIndex >= 0 ? normalized.slice(0, dashIndex) : normalized).trim();
+    const notes = (dashIndex >= 0 ? normalized.slice(dashIndex + 3) : "").trim();
+    if (!title) continue;
+
+    const titleKey = title.toLowerCase();
+    if (seenTitles.has(titleKey)) continue;
+    seenTitles.add(titleKey);
+
+    techniques.push({
+      id: `tech-${cryptoSafeId()}`,
+      title,
+      category: "Submission",
+      dateIso: nowIso,
+      tags: [],
+      notes,
+      links: [],
+      favorite: false,
+    });
+  }
+
+  return techniques;
+}
 
 const formatDateTimeLabel = (iso: string) => {
   const date = new Date(iso);
@@ -2068,6 +2413,64 @@ function LinkIcon() {
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function ImportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true" fill="none">
+      <path
+        d="M12 3v10"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="m8 9 4 4 4-4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="M8 8h10v12H8z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6 16H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function LightningIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="M13 2 4 14h7l-1 8 10-14h-7z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
       />
     </svg>
   );
