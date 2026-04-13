@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const belts = ["White", "Blue", "Purple", "Brown", "Black"] as const;
 type Belt = (typeof belts)[number];
@@ -514,47 +514,565 @@ function TrendIcon() {
 }
 
 function MainScreen({ name }: { name: string }) {
+  const [activeTab, setActiveTab] = useState<"library" | "systems" | "discover">("library");
+  const [showTour, setShowTour] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+
+  const fabRef = useRef<HTMLButtonElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const filterRef = useRef<HTMLButtonElement | null>(null);
+  const tagRef = useRef<HTMLButtonElement | null>(null);
+  const techniqueCardRef = useRef<HTMLButtonElement | null>(null);
+
+  const tourSteps = useMemo(
+    () =>
+      [
+        {
+          key: "add",
+          title: "Add Techniques",
+          description: "Tap here to add a new technique to your collection.",
+        },
+        {
+          key: "search",
+          title: "Search Your Techniques",
+          description: "Use the search bar to quickly find techniques by name or tag.",
+        },
+        {
+          key: "filter",
+          title: "Filter by Category",
+          description: "Filter techniques by category like Submission, Sweep, or Escape.",
+        },
+        {
+          key: "tags",
+          title: "Tag Filtering",
+          description: "Great for finding techniques by position or custom tags you’ve created.",
+        },
+        {
+          key: "technique",
+          title: "Interact with Techniques",
+          description: "Tap a technique to view details. Swipe left to edit or right to delete.",
+        },
+      ] as const,
+    [],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    queueMicrotask(() => {
+      try {
+        const done = window.localStorage.getItem("flowroll_tour_done") === "1";
+        setShowTour(!done);
+        setTourStep(0);
+      } catch {
+        setShowTour(true);
+        setTourStep(0);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!showTour) return;
+
+    const updateAnchor = () => {
+      const step = tourSteps[tourStep];
+      const element = (() => {
+        if (!step) return null;
+        if (step.key === "add") return fabRef.current;
+        if (step.key === "search") return searchRef.current;
+        if (step.key === "filter") return filterRef.current;
+        if (step.key === "tags") return tagRef.current;
+        if (step.key === "technique") return techniqueCardRef.current;
+        return null;
+      })();
+      if (!element) {
+        setAnchorRect(null);
+        return;
+      }
+      setAnchorRect(element.getBoundingClientRect());
+    };
+
+    updateAnchor();
+    window.addEventListener("resize", updateAnchor);
+    window.addEventListener("scroll", updateAnchor, true);
+
+    return () => {
+      window.removeEventListener("resize", updateAnchor);
+      window.removeEventListener("scroll", updateAnchor, true);
+    };
+  }, [showTour, tourStep, tourSteps]);
+
+  const finishTour = () => {
+    try {
+      window.localStorage.setItem("flowroll_tour_done", "1");
+    } catch {
+      // ignore
+    }
+    setShowTour(false);
+  };
+
+  const goTourNext = () => {
+    if (tourStep >= tourSteps.length - 1) {
+      finishTour();
+      return;
+    }
+    setTourStep((value) => value + 1);
+  };
+
+  const goTourBack = () => {
+    setTourStep((value) => Math.max(0, value - 1));
+  };
+
+  const currentTourStep = tourSteps[tourStep];
+
+  const popover = useMemo(() => {
+    if (!anchorRect) return null;
+
+    const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 0;
+    const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 0;
+
+    const maxWidth = 460;
+    const width = Math.min(maxWidth, Math.max(320, viewportWidth - 32));
+    const estimatedHeight = 170;
+
+    const centerX = anchorRect.left + anchorRect.width / 2;
+    const centerY = anchorRect.top + anchorRect.height / 2;
+    const placeBelow = centerY < viewportHeight * 0.55;
+
+    const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+    const left = clamp(centerX - width / 2, 16, Math.max(16, viewportWidth - width - 16));
+    const topRaw = placeBelow ? anchorRect.bottom + 14 : anchorRect.top - estimatedHeight - 14;
+    const top = clamp(topRaw, 16, Math.max(16, viewportHeight - estimatedHeight - 16));
+
+    const arrowLeft = clamp(centerX - left, 28, width - 28);
+
+    return { left, top, width, arrowLeft, placeBelow };
+  }, [anchorRect]);
+
   return (
     <div className="min-h-screen bg-black text-white">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-8 sm:px-8">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
         <header className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-zinc-400">Welcome back</p>
-            <h1 className="text-3xl font-semibold">{name}&apos;s Library</h1>
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200">
+              <UserIcon />
+            </div>
+            <p className="text-lg font-semibold">{name || "Sahil"}</p>
           </div>
-          <button className="rounded-full border border-white/20 px-4 py-2 text-sm text-zinc-300">
-            Settings
+          <button
+            type="button"
+            aria-label="Settings"
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <GearIcon />
           </button>
         </header>
 
-        <main className="mt-10 grid flex-1 gap-4 md:grid-cols-2">
-          <section className="rounded-3xl border border-blue-500/40 bg-blue-600/10 p-6">
-            <p className="text-sm uppercase tracking-[0.22em] text-blue-300">Action</p>
-            <h2 className="mt-3 text-3xl font-bold">Add technique to your collection</h2>
-            <p className="mt-2 text-zinc-300">
-              Tap the + button to capture a technique from class and save key details.
-            </p>
-            <button className="mt-6 rounded-full bg-blue-600 px-6 py-3 text-lg font-semibold">
-              + Add Technique
+        <nav className="mt-5 flex items-end justify-between gap-6 border-b border-white/10 pb-3">
+          <button
+            type="button"
+            onClick={() => setActiveTab("library")}
+            className={`relative text-sm font-semibold transition ${
+              activeTab === "library" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            My Library
+            {activeTab === "library" ? (
+              <span className="absolute -bottom-3 left-0 h-0.5 w-16 rounded-full bg-blue-500" />
+            ) : null}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("systems")}
+            className={`relative text-sm font-semibold transition ${
+              activeTab === "systems" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Systems{" "}
+            <span className="ml-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300 ring-1 ring-amber-300/30">
+              New
+            </span>
+            {activeTab === "systems" ? (
+              <span className="absolute -bottom-3 left-0 h-0.5 w-14 rounded-full bg-blue-500" />
+            ) : null}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("discover")}
+            className={`relative text-sm font-semibold transition ${
+              activeTab === "discover" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Discover
+            {activeTab === "discover" ? (
+              <span className="absolute -bottom-3 left-0 h-0.5 w-16 rounded-full bg-blue-500" />
+            ) : null}
+          </button>
+        </nav>
+
+        {activeTab === "library" ? (
+          <main className="mt-5 flex-1">
+            <div className="flex items-center gap-3">
+              <div className="flex flex-1 items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <SearchIcon />
+                <input
+                  ref={searchRef}
+                  placeholder="Search techniques"
+                  className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                />
+              </div>
+              <button
+                ref={filterRef}
+                type="button"
+                aria-label="Filters"
+                className="grid h-11 w-11 place-items-center rounded-xl border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+              >
+                <ChevronDownIcon />
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between">
+              <button
+                ref={tagRef}
+                type="button"
+                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+              >
+                Add Tags <span className="ml-1 text-zinc-400">+</span>
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+                >
+                  Graph
+                </button>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+                >
+                  New <ChevronDownSmallIcon />
+                </button>
+              </div>
+            </div>
+
+            <p className="mt-5 text-xs text-zinc-500">1 technique found</p>
+
+            <button
+              ref={techniqueCardRef}
+              type="button"
+              className="mt-3 w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-left shadow-[0_18px_60px_rgba(0,0,0,0.5)] transition hover:bg-white/10"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="truncate text-lg font-semibold">Triangle Choke</p>
+                  <p className="mt-0.5 text-xs text-zinc-500">Mar 26 3:04 AM</p>
+                </div>
+                <span className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-black/30 text-zinc-200">
+                  <ChevronDownIcon />
+                </span>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
+                  Submission
+                </span>
+                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
+                  Beginner
+                </span>
+                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
+                  +1
+                </span>
+              </div>
             </button>
-          </section>
+          </main>
+        ) : (
+          <main className="mt-10 flex-1 rounded-3xl border border-white/10 bg-white/5 p-6 text-zinc-300">
+            <p className="text-sm font-semibold text-white">
+              {activeTab === "systems" ? "Systems" : "Discover"}
+            </p>
+            <p className="mt-2 text-sm text-zinc-400">Under construction.</p>
+          </main>
+        )}
 
-          <section className="rounded-3xl border border-white/10 bg-zinc-900/60 p-6">
-            <h2 className="text-2xl font-semibold">Sessions</h2>
-            <p className="mt-2 text-zinc-400">Under construction.</p>
-          </section>
+        <button
+          ref={fabRef}
+          type="button"
+          aria-label="Add technique"
+          className="fixed bottom-24 right-6 grid h-14 w-14 place-items-center rounded-full bg-blue-600 text-white shadow-[0_18px_50px_rgba(0,0,0,0.65)] transition hover:bg-blue-500"
+        >
+          <span className="text-3xl leading-none">+</span>
+        </button>
 
-          <section className="rounded-3xl border border-white/10 bg-zinc-900/60 p-6">
-            <h2 className="text-2xl font-semibold">Systems</h2>
-            <p className="mt-2 text-zinc-400">Under construction.</p>
-          </section>
+        <BottomNav />
 
-          <section className="rounded-3xl border border-white/10 bg-zinc-900/60 p-6">
-            <h2 className="text-2xl font-semibold">Discover</h2>
-            <p className="mt-2 text-zinc-400">Under construction.</p>
-          </section>
-        </main>
+        {showTour && popover ? (
+          <div className="fixed inset-0 z-50">
+            <button
+              type="button"
+              aria-label="Close tutorial"
+              className="absolute inset-0 bg-black/65"
+              onClick={finishTour}
+            />
+
+            {anchorRect ? (
+              <div
+                className="pointer-events-none absolute rounded-2xl ring-2 ring-blue-500/70 ring-offset-2 ring-offset-black/80"
+                style={{
+                  left: Math.max(8, anchorRect.left - 6),
+                  top: Math.max(8, anchorRect.top - 6),
+                  width: Math.max(16, anchorRect.width + 12),
+                  height: Math.max(16, anchorRect.height + 12),
+                }}
+              />
+            ) : null}
+
+            <div
+              className="absolute rounded-2xl bg-white text-zinc-900 shadow-[0_30px_90px_rgba(0,0,0,0.75)]"
+              style={{
+                left: popover.left,
+                top: popover.top,
+                width: popover.width,
+              }}
+            >
+              <div className="flex items-start justify-between gap-4 px-6 pt-5">
+                <p className="text-xs font-semibold text-zinc-500">
+                  Step {tourStep + 1} of {tourSteps.length}
+                </p>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  className="rounded-full p-1 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700"
+                  onClick={finishTour}
+                >
+                  <XIcon />
+                </button>
+              </div>
+
+              <div className="px-6 pb-5">
+                <p className="mt-1 text-lg font-semibold">{currentTourStep.title}</p>
+                <p className="mt-2 text-sm leading-relaxed text-zinc-600">
+                  {currentTourStep.description}
+                </p>
+
+                <div className="mt-5 flex items-center justify-between gap-4">
+                  <div className="text-sm font-semibold text-zinc-600">
+                    {tourStep === 0 ? (
+                      <button type="button" onClick={finishTour} className="hover:text-zinc-900">
+                        Skip
+                      </button>
+                    ) : (
+                      <button type="button" onClick={goTourBack} className="hover:text-zinc-900">
+                        ‹ Back
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {tourSteps.map((step, index) => (
+                      <span
+                        key={step.key}
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          index === tourStep ? "bg-zinc-900" : "bg-zinc-300"
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={goTourNext}
+                    className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-500"
+                  >
+                    {tourStep === tourSteps.length - 1 ? "Got it!" : (
+                      <span className="inline-flex items-center gap-2">
+                        Next <span aria-hidden="true">›</span>
+                      </span>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div
+                className="absolute h-0 w-0"
+                style={{
+                  left: popover.arrowLeft,
+                  top: popover.placeBelow ? -10 : undefined,
+                  bottom: popover.placeBelow ? undefined : -10,
+                  borderLeft: "10px solid transparent",
+                  borderRight: "10px solid transparent",
+                  borderTop: popover.placeBelow ? undefined : "10px solid white",
+                  borderBottom: popover.placeBelow ? "10px solid white" : undefined,
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+function BottomNav() {
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-black/85 backdrop-blur">
+      <div className="mx-auto flex max-w-3xl items-center justify-between px-8 py-3 text-xs text-zinc-500">
+        <button type="button" className="flex flex-col items-center gap-1">
+          <SessionsIcon />
+          Sessions
+        </button>
+        <button type="button" className="flex flex-col items-center gap-1 text-blue-400">
+          <BookIconFilled />
+          Techniques
+        </button>
+        <button type="button" className="flex flex-col items-center gap-1">
+          <ChartIcon />
+          You
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UserIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M20 21a8 8 0 0 0-16 0"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M12 13a5 5 0 1 0-5-5 5 5 0 0 0 5 5z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M12 15.5a3.5 3.5 0 1 0-3.5-3.5 3.5 3.5 0 0 0 3.5 3.5z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="M19.4 15a8.7 8.7 0 0 0 .1-1l2-1.2-2-3.4-2.3.5a7.2 7.2 0 0 0-1.7-1l-.4-2.3H10l-.4 2.3a7.2 7.2 0 0 0-1.7 1L5.6 9.4l-2 3.4 2 1.2a8.7 8.7 0 0 0 .1 1l-2 1.2 2 3.4 2.3-.5a7.2 7.2 0 0 0 1.7 1l.4 2.3h4l.4-2.3a7.2 7.2 0 0 0 1.7-1l2.3.5 2-3.4z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 text-zinc-500" aria-hidden="true" fill="none">
+      <path
+        d="M10.5 18a7.5 7.5 0 1 1 7.5-7.5A7.5 7.5 0 0 1 10.5 18z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="M16.2 16.2 21 21"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="m6 9 6 6 6-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChevronDownSmallIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="m7 10 5 5 5-5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M6 6l12 12M18 6 6 18"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function SessionsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M7 21h10a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2V5a3 3 0 0 0-6 0v2H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M9 12h6M9 16h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function BookIconFilled() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M7 4.5h10a2 2 0 0 1 2 2V19a1 1 0 0 1-1 1H7a3 3 0 0 0-3 3V7.5a3 3 0 0 1 3-3z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M7 4.5V20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChartIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M4 19V5M20 19H4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M8 15v-4M12 15V7M16 15v-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
