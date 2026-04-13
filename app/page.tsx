@@ -546,7 +546,12 @@ function MainScreen({ name }: { name: string }) {
       if (!raw) return [createDefaultTechnique()];
       const parsed = JSON.parse(raw) as Technique[];
       if (!Array.isArray(parsed) || parsed.length === 0) return [createDefaultTechnique()];
-      return parsed;
+      return parsed.map((technique) => ({
+        ...technique,
+        linkedTechniqueIds: Array.isArray((technique as { linkedTechniqueIds?: unknown }).linkedTechniqueIds)
+          ? (technique as { linkedTechniqueIds: string[] }).linkedTechniqueIds
+          : [],
+      }));
     } catch {
       return [createDefaultTechnique()];
     }
@@ -745,6 +750,7 @@ function MainScreen({ name }: { name: string }) {
       tags: technique.tags,
       notes: technique.notes,
       links: technique.links,
+      linkedTechniqueIds: technique.linkedTechniqueIds,
       favorite: technique.favorite,
     });
     setScreen("edit");
@@ -764,6 +770,7 @@ function MainScreen({ name }: { name: string }) {
       tags: [],
       notes: "",
       links: [],
+      linkedTechniqueIds: [],
       favorite: false,
       isNew: true,
     });
@@ -780,6 +787,7 @@ function MainScreen({ name }: { name: string }) {
       tags: dedupeStrings(draftTechnique.tags),
       notes: draftTechnique.notes.trim(),
       links: draftTechnique.links,
+      linkedTechniqueIds: draftTechnique.linkedTechniqueIds,
       favorite: draftTechnique.favorite,
     };
 
@@ -981,20 +989,20 @@ function MainScreen({ name }: { name: string }) {
 
   if (screen === "edit" && draftTechnique) {
     return (
-      <TechniqueEditScreen
-        draft={draftTechnique}
-        onDraftChange={setDraftTechnique}
-        onCancel={() => {
-          setDraftTechnique(null);
-          setScreen(activeTechniqueId ? "detail" : "list");
-        }}
-        onSave={saveDraftTechnique}
-        onDelete={() => deleteTechnique(draftTechnique.id)}
-        onOpenTags={() => openTags("technique", draftTechnique.tags)}
-        onImport={() => openImportFrom("edit")}
-      />
-    );
-  }
+        <TechniqueEditScreen
+          draft={draftTechnique}
+          onDraftChange={setDraftTechnique}
+          onCancel={() => {
+            setDraftTechnique(null);
+            setScreen(activeTechniqueId ? "detail" : "list");
+          }}
+          onSave={saveDraftTechnique}
+          onDelete={() => deleteTechnique(draftTechnique.id)}
+          onImport={() => openImportFrom("edit")}
+          allTechniques={techniques}
+        />
+      );
+    }
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -1411,6 +1419,39 @@ const tagGroups = [
   },
 ] as const;
 
+const techniqueTagGroups = [
+  {
+    title: "Positions",
+    tags: [
+      "Mount",
+      "Closed Guard",
+      "Side Control",
+      "Back",
+      "Half Guard",
+      "Standing",
+      "Open Guard",
+      "Butterfly Guard",
+      "De La Riva Guard",
+      "X-Guard",
+      "Spider Guard",
+      "Lasso Guard",
+      "Reverse De La Riva Guard",
+      "Deep Half Guard",
+      "Single Leg X-Guard",
+      "North South",
+      "Knee on Belly",
+      "Turtle",
+      "50/50 Guard",
+      "3/4 Guard",
+      "S-Mount",
+    ],
+  },
+  {
+    title: "Common Tags",
+    tags: ["Beginner", "Intermediate", "Advanced", "Gi", "No-Gi"],
+  },
+] as const;
+
 function TagPickerScreen({
   query,
   selected,
@@ -1508,6 +1549,245 @@ function TagPickerScreen({
               Apply
             </button>
           </div>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function SelectTagsModal({
+  query,
+  selected,
+  limit,
+  onClose,
+  onQueryChange,
+  onToggle,
+  onDone,
+}: {
+  query: string;
+  selected: string[];
+  limit: number;
+  onClose: () => void;
+  onQueryChange: (value: string) => void;
+  onToggle: (tag: string) => void;
+  onDone: () => void;
+}) {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        aria-label="Close tags"
+        className="absolute inset-0 bg-black/65"
+        onClick={onClose}
+      />
+      <div className="absolute left-1/2 top-[90px] w-[min(94vw,520px)] -translate-x-1/2 overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-[0_30px_90px_rgba(0,0,0,0.85)]">
+        <header className="flex items-center justify-between px-6 py-5">
+          <div>
+            <p className="text-lg font-semibold text-white">Select Tags</p>
+            <p className="mt-1 text-sm text-zinc-500">
+              Selected {selected.length} of {limit}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <XIcon />
+          </button>
+        </header>
+
+        <div className="px-6 pb-6">
+          <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <SearchIcon />
+            <input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="Search tags"
+              className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+            />
+          </div>
+
+          <div className="mt-6 max-h-[56vh] overflow-auto pr-1">
+            <div className="space-y-8">
+              {techniqueTagGroups.map((group) => {
+                const visibleTags = group.tags.filter((tag) => {
+                  if (!normalizedQuery) return true;
+                  return tag.toLowerCase().includes(normalizedQuery);
+                });
+                if (visibleTags.length === 0) return null;
+
+                return (
+                  <section key={group.title} className="space-y-3">
+                    <p className="text-sm font-semibold text-zinc-300">{group.title}</p>
+                    <div className="flex flex-wrap gap-3">
+                      {visibleTags.map((tag) => {
+                        const active = selected.includes(tag);
+                        const disabled = !active && selected.length >= limit;
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => onToggle(tag)}
+                            disabled={disabled}
+                            className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                              active
+                                ? "bg-blue-600 text-white"
+                                : "border border-white/10 bg-white/5 text-zinc-200 hover:bg-white/10"
+                            } disabled:cursor-not-allowed disabled:opacity-40`}
+                          >
+                            {tag}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <footer className="border-t border-white/10 bg-black/50 px-6 py-5">
+          <button
+            type="button"
+            onClick={onDone}
+            className="h-12 w-full rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
+          >
+            Done
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function LinkedTechniquesModal({
+  query,
+  selectedIds,
+  limit,
+  techniques,
+  onClose,
+  onQueryChange,
+  onToggle,
+  onDone,
+}: {
+  query: string;
+  selectedIds: string[];
+  limit: number;
+  techniques: Technique[];
+  onClose: () => void;
+  onQueryChange: (value: string) => void;
+  onToggle: (techniqueId: string) => void;
+  onDone: () => void;
+}) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleTechniques = useMemo(() => {
+    if (!normalizedQuery) return techniques;
+    return techniques.filter((technique) => technique.title.toLowerCase().includes(normalizedQuery));
+  }, [normalizedQuery, techniques]);
+
+  const grouped = useMemo(() => {
+    const map = new Map<Exclude<TechniqueCategoryKey, "All">, Technique[]>();
+    for (const technique of visibleTechniques) {
+      const list = map.get(technique.category) ?? [];
+      list.push(technique);
+      map.set(technique.category, list);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [visibleTechniques]);
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        aria-label="Close linked techniques"
+        className="absolute inset-0 bg-black/65"
+        onClick={onClose}
+      />
+      <div className="absolute left-1/2 top-[90px] w-[min(94vw,520px)] -translate-x-1/2 overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-[0_30px_90px_rgba(0,0,0,0.85)]">
+        <header className="flex items-center justify-between px-6 py-5">
+          <p className="text-lg font-semibold text-white">Linked Techniques</p>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <XIcon />
+          </button>
+        </header>
+
+        <div className="px-6 pb-6">
+          <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <SearchIcon />
+            <input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="Search techniques"
+              className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+            />
+          </div>
+
+          <div className="mt-5 max-h-[56vh] overflow-auto rounded-2xl border border-white/10 bg-black/25">
+            {grouped.length === 0 ? (
+              <p className="px-5 py-6 text-sm text-zinc-500">No techniques found.</p>
+            ) : (
+              grouped.map(([category, items]) => (
+                <div key={category}>
+                  <div className="flex items-center justify-between px-5 py-3 text-xs font-semibold text-zinc-400">
+                    <span className="flex items-center gap-2">
+                      <span className={`h-2.5 w-2.5 rounded-full ${categoryDotClass(category)}`} />
+                      {category}
+                    </span>
+                    <span>({items.length})</span>
+                  </div>
+                  <div className="border-t border-white/10" />
+                  {items.map((technique) => {
+                    const active = selectedIds.includes(technique.id);
+                    const disabled = !active && selectedIds.length >= limit;
+                    return (
+                      <button
+                        key={technique.id}
+                        type="button"
+                        onClick={() => onToggle(technique.id)}
+                        disabled={disabled}
+                        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-white">{technique.title}</p>
+                          <p className="mt-0.5 text-xs text-zinc-500">{technique.category}</p>
+                        </div>
+                        <span
+                          className={`grid h-7 w-7 place-items-center rounded-full border ${
+                            active
+                              ? "border-blue-500 bg-blue-600 text-white"
+                              : "border-white/15 bg-black/20 text-transparent"
+                          }`}
+                          aria-hidden="true"
+                        >
+                          ✓
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <footer className="border-t border-white/10 bg-black/50 px-6 py-5">
+          <button
+            type="button"
+            onClick={onDone}
+            className="h-12 w-full rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
+          >
+            Done
+          </button>
         </footer>
       </div>
     </div>
@@ -2006,6 +2286,7 @@ type Technique = {
   tags: string[];
   notes: string;
   links: TechniqueLink[];
+  linkedTechniqueIds: string[];
   favorite: boolean;
 };
 
@@ -2028,6 +2309,7 @@ const createDefaultTechnique = (): Technique => ({
       url: "https://www.youtube.com/watch?v=2Oj7l",
     },
   ],
+  linkedTechniqueIds: [],
   favorite: false,
 });
 
@@ -2097,6 +2379,7 @@ function parseTechniqueImport(text: string): Technique[] {
       tags: [],
       notes,
       links: [],
+      linkedTechniqueIds: [],
       favorite: false,
     });
   }
@@ -2227,6 +2510,7 @@ function TechniqueDetailScreen({
   onToggleFavorite: () => void;
 }) {
   const categoryAccent = categoryDotClass(technique.category);
+  const linkedCount = technique.linkedTechniqueIds.length;
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -2354,7 +2638,11 @@ function TechniqueDetailScreen({
                 <PencilIcon />
               </button>
             </div>
-            <p className="text-sm text-zinc-500 italic">No linked techniques yet</p>
+            {linkedCount === 0 ? (
+              <p className="text-sm text-zinc-500 italic">No linked techniques yet</p>
+            ) : (
+              <p className="text-sm text-zinc-200">{linkedCount} linked technique{linkedCount === 1 ? "" : "s"}</p>
+            )}
           </section>
         </main>
       </div>
@@ -2368,36 +2656,56 @@ function TechniqueEditScreen({
   onCancel,
   onSave,
   onDelete,
-  onOpenTags,
   onImport,
+  allTechniques,
 }: {
   draft: TechniqueDraft;
   onDraftChange: (next: TechniqueDraft) => void;
   onCancel: () => void;
   onSave: () => void;
   onDelete: () => void;
-  onOpenTags: () => void;
   onImport: () => void;
+  allTechniques: Technique[];
 }) {
   const update = (patch: Partial<TechniqueDraft>) => onDraftChange({ ...draft, ...patch });
+  const [isTagModalOpen, setIsTagModalOpen] = useState(false);
+  const [tagQuery, setTagQuery] = useState("");
+  const [isLinkedModalOpen, setIsLinkedModalOpen] = useState(false);
+  const [linkedQuery, setLinkedQuery] = useState("");
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [linkDraft, setLinkDraft] = useState("");
 
-  const addLink = () => {
-    update({
-      links: [
-        ...draft.links,
-        { id: `link-${cryptoSafeId()}`, title: "New link", url: "" },
-      ],
-    });
-  };
-
-  const updateLink = (id: string, patch: Partial<TechniqueLink>) => {
-    update({
-      links: draft.links.map((link) => (link.id === id ? { ...link, ...patch } : link)),
-    });
-  };
+  const linkLimit = 10;
 
   const removeLink = (id: string) => {
     update({ links: draft.links.filter((link) => link.id !== id) });
+  };
+
+  const addLinkFromDraft = () => {
+    const value = linkDraft.trim();
+    if (!value) return;
+    if (draft.links.length >= linkLimit) return;
+
+    update({
+      links: [
+        ...draft.links,
+        { id: `link-${cryptoSafeId()}`, title: value, url: value },
+      ],
+    });
+    setLinkDraft("");
+  };
+
+  const tagLimit = 10;
+  const linkedLimit = 15;
+
+  const openTagModal = () => {
+    setTagQuery("");
+    setIsTagModalOpen(true);
+  };
+
+  const openLinkedModal = () => {
+    setLinkedQuery("");
+    setIsLinkedModalOpen(true);
   };
 
   return (
@@ -2455,7 +2763,7 @@ function TechniqueEditScreen({
             <input
               value={draft.title}
               onChange={(event) => update({ title: event.target.value })}
-              placeholder="Technique name"
+              placeholder="Name"
               className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
             />
           </section>
@@ -2464,8 +2772,8 @@ function TechniqueEditScreen({
             <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Category</p>
             <button
               type="button"
-              onClick={() => {}}
-              className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-left"
+              onClick={() => setIsCategoryModalOpen(true)}
+              className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-transparent px-1 py-2 text-left"
             >
               <span className="flex items-center gap-3">
                 <span className={`h-3 w-3 rounded-full ${categoryDotClass(draft.category)}`} />
@@ -2473,50 +2781,31 @@ function TechniqueEditScreen({
               </span>
               <ChevronDownSmallIcon />
             </button>
-            <div className="grid grid-cols-2 gap-2">
-              {techniqueCategories
-                .filter((entry) => entry.key !== "All")
-                .map((entry) => {
-                  const key = entry.key as Exclude<TechniqueCategoryKey, "All">;
-                  const active = key === draft.category;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => update({ category: key })}
-                      className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition ${
-                        active ? "bg-blue-600 text-white" : "border border-white/10 bg-white/5 text-zinc-200 hover:bg-white/10"
-                      }`}
-                    >
-                      <span className={`h-2.5 w-2.5 rounded-full ${entry.dot}`} aria-hidden="true" />
-                      {entry.label}
-                    </button>
-                  );
-                })}
-            </div>
           </section>
 
           <section className="space-y-3">
             <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Tags</p>
             <div className="flex flex-wrap items-center gap-2">
-              {draft.tags.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() => update({ tags: draft.tags.filter((value) => value !== tag) })}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
-                  aria-label={`Remove tag ${tag}`}
-                >
-                  {tag} <span aria-hidden="true" className="text-zinc-400">×</span>
-                </button>
-              ))}
+              {draft.tags.length > 0
+                ? draft.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200"
+                    >
+                      {tag}
+                    </span>
+                  ))
+                : null}
               <button
                 type="button"
                 aria-label="Add tags"
-                onClick={onOpenTags}
-                className="grid h-9 w-9 place-items-center rounded-full bg-white text-black transition hover:bg-zinc-200"
+                onClick={openTagModal}
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
               >
-                <PlusIcon />
+                <span className="grid h-5 w-5 place-items-center rounded-full bg-white text-black">
+                  <PlusIcon />
+                </span>
+                {draft.tags.length === 0 ? null : <span className="text-zinc-400">Add</span>}
               </button>
             </div>
           </section>
@@ -2526,78 +2815,93 @@ function TechniqueEditScreen({
             <textarea
               value={draft.notes}
               onChange={(event) => update({ notes: event.target.value })}
-              placeholder="Write notes..."
+              placeholder="Add notes about the technique, key details, or what you learned..."
               className="min-h-[140px] w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-600"
             />
           </section>
 
           <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Media</p>
+            <div className="flex items-start gap-4">
+              <div className="grid h-20 w-20 place-items-center rounded-2xl border border-dashed border-white/15 bg-white/5 text-zinc-300">
+                <MediaIcon />
+              </div>
+              <div className="pt-2">
+                <p className="text-sm text-zinc-500">Add up to 3 photos or videos.</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Links &amp; References</p>
+              <p className="text-xs text-zinc-500">
+                {draft.links.length}/{linkLimit} links
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <input
+                value={linkDraft}
+                onChange={(event) => setLinkDraft(event.target.value)}
+                placeholder="Enter reference link..."
+                className="h-12 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  addLinkFromDraft();
+                }}
+              />
               <button
                 type="button"
                 aria-label="Add link"
-                onClick={addLink}
-                className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+                onClick={addLinkFromDraft}
+                disabled={!linkDraft.trim() || draft.links.length >= linkLimit}
+                className="grid h-12 w-12 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <PlusIcon />
               </button>
             </div>
 
-            {draft.links.length === 0 ? (
-              <input
-                placeholder="Enter reference link..."
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  const value = (event.target as HTMLInputElement).value.trim();
-                  if (!value) return;
-                  update({
-                    links: [
-                      ...draft.links,
-                      { id: `link-${cryptoSafeId()}`, title: value, url: value },
-                    ],
-                  });
-                  (event.target as HTMLInputElement).value = "";
-                }}
-              />
-            ) : (
+            {draft.links.length > 0 ? (
               <div className="space-y-3">
                 {draft.links.map((link) => (
                   <div
                     key={link.id}
-                    className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
+                    className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-zinc-200">Link</p>
-                      <button
-                        type="button"
-                        aria-label="Remove link"
-                        onClick={() => removeLink(link.id)}
-                        className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-300 transition hover:bg-white/10"
-                      >
-                        <TrashIcon />
-                      </button>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-zinc-200">{link.title}</p>
+                      <p className="truncate text-xs text-zinc-500">{link.url}</p>
                     </div>
-                    <input
-                      value={link.title}
-                      onChange={(event) => updateLink(link.id, { title: event.target.value })}
-                      placeholder="Title"
-                      className="mt-3 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
-                    />
-                    <input
-                      value={link.url}
-                      onChange={(event) => updateLink(link.id, { url: event.target.value })}
-                      placeholder="URL"
-                      className="mt-3 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
-                    />
-                    <p className="mt-2 text-xs text-zinc-500">
-                      {draft.links.indexOf(link) + 1}/{draft.links.length} links
-                    </p>
+                    <button
+                      type="button"
+                      aria-label="Remove link"
+                      onClick={() => removeLink(link.id)}
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-300 transition hover:bg-white/10"
+                    >
+                      <TrashIcon />
+                    </button>
                   </div>
                 ))}
               </div>
-            )}
+            ) : null}
+          </section>
+
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Linked Techniques</p>
+              <p className="text-xs text-zinc-500">
+                {draft.linkedTechniqueIds.length}/{linkedLimit} linked
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={openLinkedModal}
+              className="flex w-full items-center justify-between border-b border-white/10 py-3 text-left transition hover:text-white"
+            >
+              <p className="text-sm text-zinc-500">Select related techniques...</p>
+              <ChevronDownSmallIcon />
+            </button>
           </section>
         </main>
 
@@ -2613,13 +2917,65 @@ function TechniqueEditScreen({
             <button
               type="button"
               onClick={onSave}
-              className="h-12 flex-1 rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
+              className="h-12 flex-1 rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+              disabled={!draft.title.trim()}
             >
               {draft.isNew ? "Add" : "Save"}
             </button>
           </div>
         </footer>
       </div>
+
+      {isCategoryModalOpen ? (
+        <CategoryPickerModal
+          title="Select Category"
+          selected={draft.category}
+          onClose={() => setIsCategoryModalOpen(false)}
+          onPick={(category) => {
+            update({ category });
+            setIsCategoryModalOpen(false);
+          }}
+        />
+      ) : null}
+
+      {isTagModalOpen ? (
+        <SelectTagsModal
+          query={tagQuery}
+          selected={draft.tags}
+          limit={tagLimit}
+          onClose={() => setIsTagModalOpen(false)}
+          onQueryChange={setTagQuery}
+          onToggle={(tag) => {
+            const active = draft.tags.includes(tag);
+            if (!active && draft.tags.length >= tagLimit) return;
+            update({
+              tags: active ? draft.tags.filter((value) => value !== tag) : [...draft.tags, tag],
+            });
+          }}
+          onDone={() => setIsTagModalOpen(false)}
+        />
+      ) : null}
+
+      {isLinkedModalOpen ? (
+        <LinkedTechniquesModal
+          query={linkedQuery}
+          selectedIds={draft.linkedTechniqueIds}
+          limit={linkedLimit}
+          techniques={allTechniques.filter((technique) => technique.id !== draft.id)}
+          onClose={() => setIsLinkedModalOpen(false)}
+          onQueryChange={setLinkedQuery}
+          onToggle={(techniqueId) => {
+            const active = draft.linkedTechniqueIds.includes(techniqueId);
+            if (!active && draft.linkedTechniqueIds.length >= linkedLimit) return;
+            update({
+              linkedTechniqueIds: active
+                ? draft.linkedTechniqueIds.filter((value) => value !== techniqueId)
+                : [...draft.linkedTechniqueIds, techniqueId],
+            });
+          }}
+          onDone={() => setIsLinkedModalOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2890,6 +3246,31 @@ function LightningIcon() {
         d="M13 2 4 14h7l-1 8 10-14h-7z"
         stroke="currentColor"
         strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function MediaIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true" fill="none">
+      <path
+        d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 11a2 2 0 1 0-2-2 2 2 0 0 0 2 2z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="m21 15-5-5-5 6-2-2-4 5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
     </svg>
