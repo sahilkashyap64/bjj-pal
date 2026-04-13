@@ -980,9 +980,14 @@ function MainScreen({ name }: { name: string }) {
     return (
       <TechniqueDetailScreen
         technique={activeTechnique}
+        allTechniques={techniques}
         onBack={() => setScreen("list")}
         onEdit={() => startEditTechnique(activeTechnique)}
         onToggleFavorite={() => toggleFavorite(activeTechnique.id)}
+        onOpenTechnique={(techniqueId) => {
+          setActiveTechniqueId(techniqueId);
+          setScreen("detail");
+        }}
       />
     );
   }
@@ -2500,17 +2505,26 @@ function CategoryPickerModal({
 
 function TechniqueDetailScreen({
   technique,
+  allTechniques,
   onBack,
   onEdit,
   onToggleFavorite,
+  onOpenTechnique,
 }: {
   technique: Technique;
+  allTechniques: Technique[];
   onBack: () => void;
   onEdit: () => void;
   onToggleFavorite: () => void;
+  onOpenTechnique: (techniqueId: string) => void;
 }) {
   const categoryAccent = categoryDotClass(technique.category);
-  const linkedCount = technique.linkedTechniqueIds.length;
+  const linkedTechniques = useMemo(() => {
+    const byId = new Map(allTechniques.map((item) => [item.id, item]));
+    return technique.linkedTechniqueIds
+      .map((id) => byId.get(id))
+      .filter((item): item is Technique => Boolean(item));
+  }, [allTechniques, technique.linkedTechniqueIds]);
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -2638,10 +2652,30 @@ function TechniqueDetailScreen({
                 <PencilIcon />
               </button>
             </div>
-            {linkedCount === 0 ? (
+            {linkedTechniques.length === 0 ? (
               <p className="text-sm text-zinc-500 italic">No linked techniques yet</p>
             ) : (
-              <p className="text-sm text-zinc-200">{linkedCount} linked technique{linkedCount === 1 ? "" : "s"}</p>
+              <div className="space-y-3">
+                {linkedTechniques.map((linked) => (
+                  <button
+                    key={linked.id}
+                    type="button"
+                    onClick={() => onOpenTechnique(linked.id)}
+                    className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-left transition hover:bg-white/10"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`absolute left-3 top-4 bottom-4 w-1 rounded-full ${categoryDotClass(
+                        linked.category,
+                      )}`}
+                    />
+                    <div className="pl-7">
+                      <p className="text-sm font-semibold text-white">{linked.title}</p>
+                      <p className="mt-1 text-xs text-zinc-500">{linked.category}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
             )}
           </section>
         </main>
