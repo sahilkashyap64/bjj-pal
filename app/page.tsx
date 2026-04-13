@@ -1128,7 +1128,7 @@ function MainScreen({ name }: { name: string }) {
               <div
                 key={technique.id}
                 ref={techniqueCardRef}
-                className="mt-3 w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left shadow-[0_18px_60px_rgba(0,0,0,0.5)]"
+                className="relative mt-3 w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left shadow-[0_18px_60px_rgba(0,0,0,0.5)]"
                 role="button"
                 tabIndex={0}
                 onClick={() => openTechnique(technique.id)}
@@ -1136,7 +1136,13 @@ function MainScreen({ name }: { name: string }) {
                   if (event.key === "Enter" || event.key === " ") openTechnique(technique.id);
                 }}
               >
-                <div className="px-5 py-4">
+                <span
+                  aria-hidden="true"
+                  className={`absolute left-3 top-4 bottom-4 w-1 rounded-full ${categoryDotClass(
+                    technique.category,
+                  )}`}
+                />
+                <div className="pl-7 pr-5 py-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <p className="truncate text-lg font-semibold">{technique.title}</p>
@@ -1161,22 +1167,9 @@ function MainScreen({ name }: { name: string }) {
                   </div>
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
+                    <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-xs font-semibold text-zinc-300">
                       {technique.category}
                     </span>
-                    {technique.tags.slice(0, 2).map((tag) => (
-                      <span
-                        key={tag}
-                        className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                    {technique.tags.length > 2 ? (
-                      <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
-                        +{technique.tags.length - 2}
-                      </span>
-                    ) : null}
                   </div>
 
                   {expandedTechniqueId === technique.id ? (
@@ -1989,10 +1982,10 @@ const techniqueCategories: Array<{ key: TechniqueCategoryKey; label: string; dot
   { key: "Submission", label: "Submission", dot: "bg-red-500" },
   { key: "Sweep", label: "Sweep", dot: "bg-orange-500" },
   { key: "Takedown", label: "Takedown", dot: "bg-sky-500" },
-  { key: "Guard Pass", label: "Guard Pass", dot: "bg-emerald-500" },
+  { key: "Guard Pass", label: "Guard Pass", dot: "bg-blue-500" },
   { key: "Guard", label: "Guard", dot: "bg-green-500" },
   { key: "Control", label: "Control", dot: "bg-pink-500" },
-  { key: "Escape", label: "Escape", dot: "bg-yellow-400" },
+  { key: "Escape", label: "Escape", dot: "bg-emerald-500" },
   { key: "Defense", label: "Defense", dot: "bg-violet-500" },
 ];
 
@@ -2230,6 +2223,8 @@ function TechniqueDetailScreen({
   onEdit: () => void;
   onToggleFavorite: () => void;
 }) {
+  const categoryAccent = categoryDotClass(technique.category);
+
   return (
     <div className="min-h-screen bg-black text-white">
       <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
@@ -2265,7 +2260,7 @@ function TechniqueDetailScreen({
         <main className="mt-8 flex-1 space-y-8">
           <div className="space-y-2">
             <div className="flex items-start gap-4">
-              <div className="mt-1 h-10 w-1 rounded-full bg-red-500" />
+              <div className={`mt-1 h-10 w-1 rounded-full ${categoryAccent}`} />
               <div className="min-w-0">
                 <h1 className="text-3xl font-semibold">{technique.title}</h1>
                 <p className="mt-1 text-sm font-semibold text-red-400">{technique.category}</p>
