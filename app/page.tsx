@@ -514,6 +514,8 @@ function TrendIcon() {
 }
 
 function MainScreen({ name }: { name: string }) {
+  const [screen, setScreen] = useState<"list" | "detail" | "edit">("list");
+  const [activeTechniqueId, setActiveTechniqueId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"library" | "systems" | "discover">("library");
   const [showTour, setShowTour] = useState(false);
   const [tourStep, setTourStep] = useState(0);
@@ -524,12 +526,30 @@ function MainScreen({ name }: { name: string }) {
   const [isTagsOpen, setIsTagsOpen] = useState(false);
   const [tagDraftSelected, setTagDraftSelected] = useState<string[]>([]);
   const [tagSearchQuery, setTagSearchQuery] = useState("");
+  const [tagPickerContext, setTagPickerContext] = useState<"filter" | "technique">("filter");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedTechniqueId, setExpandedTechniqueId] = useState<string | null>(null);
+
+  const [draftTechnique, setDraftTechnique] = useState<TechniqueDraft | null>(null);
+
+  const [techniques, setTechniques] = useState<Technique[]>(() => {
+    try {
+      if (typeof window === "undefined") return [createDefaultTechnique()];
+      const raw = window.localStorage.getItem("flowroll_techniques_v1");
+      if (!raw) return [createDefaultTechnique()];
+      const parsed = JSON.parse(raw) as Technique[];
+      if (!Array.isArray(parsed) || parsed.length === 0) return [createDefaultTechnique()];
+      return parsed;
+    } catch {
+      return [createDefaultTechnique()];
+    }
+  });
 
   const fabRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const filterRef = useRef<HTMLButtonElement | null>(null);
   const tagRef = useRef<HTMLButtonElement | null>(null);
-  const techniqueCardRef = useRef<HTMLButtonElement | null>(null);
+  const techniqueCardRef = useRef<HTMLDivElement | null>(null);
 
   const tourSteps = useMemo(
     () =>
@@ -573,6 +593,14 @@ function MainScreen({ name }: { name: string }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isFilterOpen]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("flowroll_techniques_v1", JSON.stringify(techniques));
+    } catch {
+      // ignore
+    }
+  }, [techniques]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -643,23 +671,19 @@ function MainScreen({ name }: { name: string }) {
   const currentTourStep = tourSteps[tourStep];
 
   const visibleTechniques = useMemo(() => {
-    const techniques = [
-      {
-        id: "triangle-choke",
-        title: "Triangle Choke",
-        dateLabel: "Mar 26 3:04 AM",
-        category: "Submission" as const,
-        level: "Beginner" as const,
-        extraTag: "+1" as const,
-      },
-    ];
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    return techniques.filter((technique) => {
+      if (selectedCategory !== "All" && technique.category !== selectedCategory) return false;
+      if (selectedTags.length > 0 && !selectedTags.every((tag) => technique.tags.includes(tag))) return false;
+      if (!normalizedQuery) return true;
+      const haystack = `${technique.title} ${technique.tags.join(" ")}`.toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [searchQuery, selectedCategory, selectedTags, techniques]);
 
-    if (selectedCategory === "All") return techniques;
-    return techniques.filter((technique) => technique.category === selectedCategory);
-  }, [selectedCategory]);
-
-  const openTags = () => {
-    setTagDraftSelected(selectedTags);
+  const openTags = (context: "filter" | "technique", initial: string[]) => {
+    setTagPickerContext(context);
+    setTagDraftSelected(initial);
     setTagSearchQuery("");
     setIsTagsOpen(true);
   };
@@ -671,7 +695,11 @@ function MainScreen({ name }: { name: string }) {
   };
 
   const applyTags = () => {
-    setSelectedTags(tagDraftSelected);
+    if (tagPickerContext === "filter") {
+      setSelectedTags(tagDraftSelected);
+    } else if (draftTechnique) {
+      setDraftTechnique({ ...draftTechnique, tags: tagDraftSelected });
+    }
     closeTags();
   };
 
@@ -682,6 +710,85 @@ function MainScreen({ name }: { name: string }) {
   const toggleTagDraft = (tag: string) => {
     setTagDraftSelected((current) =>
       current.includes(tag) ? current.filter((value) => value !== tag) : [...current, tag],
+    );
+  };
+
+  const activeTechnique = useMemo(() => {
+    if (!activeTechniqueId) return null;
+    return techniques.find((technique) => technique.id === activeTechniqueId) ?? null;
+  }, [activeTechniqueId, techniques]);
+
+  const openTechnique = (techniqueId: string) => {
+    setActiveTechniqueId(techniqueId);
+    setScreen("detail");
+  };
+
+  const startEditTechnique = (technique: Technique) => {
+    setDraftTechnique({
+      id: technique.id,
+      title: technique.title,
+      category: technique.category,
+      dateIso: technique.dateIso,
+      tags: technique.tags,
+      notes: technique.notes,
+      links: technique.links,
+      favorite: technique.favorite,
+    });
+    setScreen("edit");
+  };
+
+  const startNewTechnique = () => {
+    const nowIso = new Date().toISOString();
+    setDraftTechnique({
+      id: `tech-${cryptoSafeId()}`,
+      title: "",
+      category: "Submission",
+      dateIso: nowIso,
+      tags: [],
+      notes: "",
+      links: [],
+      favorite: false,
+      isNew: true,
+    });
+    setScreen("edit");
+  };
+
+  const saveDraftTechnique = () => {
+    if (!draftTechnique) return;
+    const next: Technique = {
+      id: draftTechnique.id,
+      title: draftTechnique.title.trim() || "Untitled Technique",
+      category: draftTechnique.category,
+      dateIso: draftTechnique.dateIso,
+      tags: dedupeStrings(draftTechnique.tags),
+      notes: draftTechnique.notes.trim(),
+      links: draftTechnique.links,
+      favorite: draftTechnique.favorite,
+    };
+
+    setTechniques((current) => {
+      const exists = current.some((technique) => technique.id === next.id);
+      if (!exists) return [next, ...current];
+      return current.map((technique) => (technique.id === next.id ? next : technique));
+    });
+
+    setDraftTechnique(null);
+    setActiveTechniqueId(next.id);
+    setScreen("detail");
+  };
+
+  const deleteTechnique = (techniqueId: string) => {
+    setTechniques((current) => current.filter((technique) => technique.id !== techniqueId));
+    setDraftTechnique(null);
+    setActiveTechniqueId(null);
+    setScreen("list");
+  };
+
+  const toggleFavorite = (techniqueId: string) => {
+    setTechniques((current) =>
+      current.map((technique) =>
+        technique.id === techniqueId ? { ...technique, favorite: !technique.favorite } : technique,
+      ),
     );
   };
 
@@ -709,6 +816,33 @@ function MainScreen({ name }: { name: string }) {
 
     return { left, top, width, arrowLeft, placeBelow };
   }, [anchorRect]);
+
+  if (screen === "detail" && activeTechnique) {
+    return (
+      <TechniqueDetailScreen
+        technique={activeTechnique}
+        onBack={() => setScreen("list")}
+        onEdit={() => startEditTechnique(activeTechnique)}
+        onToggleFavorite={() => toggleFavorite(activeTechnique.id)}
+      />
+    );
+  }
+
+  if (screen === "edit" && draftTechnique) {
+    return (
+      <TechniqueEditScreen
+        draft={draftTechnique}
+        onDraftChange={setDraftTechnique}
+        onCancel={() => {
+          setDraftTechnique(null);
+          setScreen(activeTechniqueId ? "detail" : "list");
+        }}
+        onSave={saveDraftTechnique}
+        onDelete={() => deleteTechnique(draftTechnique.id)}
+        onOpenTags={() => openTags("technique", draftTechnique.tags)}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -779,6 +913,8 @@ function MainScreen({ name }: { name: string }) {
                 <input
                   ref={searchRef}
                   placeholder="Search techniques"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
                   className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
                 />
               </div>
@@ -813,7 +949,7 @@ function MainScreen({ name }: { name: string }) {
               <button
                 ref={tagRef}
                 type="button"
-                onClick={openTags}
+                onClick={() => openTags("filter", selectedTags)}
                 className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
               >
                 Add Tags <span className="ml-1 text-zinc-400">+</span>
@@ -840,34 +976,67 @@ function MainScreen({ name }: { name: string }) {
             </p>
 
             {visibleTechniques.map((technique) => (
-              <button
+              <div
                 key={technique.id}
                 ref={techniqueCardRef}
-                type="button"
-                className="mt-3 w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-left shadow-[0_18px_60px_rgba(0,0,0,0.5)] transition hover:bg-white/10"
+                className="mt-3 w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left shadow-[0_18px_60px_rgba(0,0,0,0.5)]"
+                role="button"
+                tabIndex={0}
+                onClick={() => openTechnique(technique.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") openTechnique(technique.id);
+                }}
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="truncate text-lg font-semibold">{technique.title}</p>
-                    <p className="mt-0.5 text-xs text-zinc-500">{technique.dateLabel}</p>
+                <div className="px-5 py-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="truncate text-lg font-semibold">{technique.title}</p>
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        {formatDateTimeLabel(technique.dateIso)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={expandedTechniqueId === technique.id ? "Collapse technique" : "Expand technique"}
+                      onClick={() =>
+                        setExpandedTechniqueId((current) =>
+                          current === technique.id ? null : technique.id,
+                        )
+                      }
+                      onMouseDown={(event) => event.stopPropagation()}
+                      onClickCapture={(event) => event.stopPropagation()}
+                      className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-black/30 text-zinc-200 transition hover:bg-white/10"
+                    >
+                      {expandedTechniqueId === technique.id ? <ChevronUpIcon /> : <ChevronDownIcon />}
+                    </button>
                   </div>
-                  <span className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-black/30 text-zinc-200">
-                    <ChevronDownIcon />
-                  </span>
-                </div>
 
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
-                    {technique.category}
-                  </span>
-                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
-                    {technique.level}
-                  </span>
-                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
-                    {technique.extraTag}
-                  </span>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
+                      {technique.category}
+                    </span>
+                    {technique.tags.slice(0, 2).map((tag) => (
+                      <span
+                        key={tag}
+                        className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                    {technique.tags.length > 2 ? (
+                      <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-zinc-200">
+                        +{technique.tags.length - 2}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {expandedTechniqueId === technique.id ? (
+                    <p className="mt-4 text-sm leading-relaxed text-zinc-300">
+                      {technique.notes || "No notes yet."}
+                    </p>
+                  ) : null}
                 </div>
-              </button>
+              </div>
             ))}
           </main>
         ) : (
@@ -883,6 +1052,7 @@ function MainScreen({ name }: { name: string }) {
           ref={fabRef}
           type="button"
           aria-label="Add technique"
+          onClick={startNewTechnique}
           className="fixed bottom-24 right-6 grid h-14 w-14 place-items-center rounded-full bg-blue-600 text-white shadow-[0_18px_50px_rgba(0,0,0,0.65)] transition hover:bg-blue-500"
         >
           <span className="text-3xl leading-none">+</span>
@@ -1220,6 +1390,475 @@ const techniqueCategories: Array<{ key: TechniqueCategoryKey; label: string; dot
   { key: "Escape", label: "Escape", dot: "bg-yellow-400" },
 ];
 
+type TechniqueLink = {
+  id: string;
+  title: string;
+  url: string;
+};
+
+type Technique = {
+  id: string;
+  title: string;
+  category: Exclude<TechniqueCategoryKey, "All">;
+  dateIso: string;
+  tags: string[];
+  notes: string;
+  links: TechniqueLink[];
+  favorite: boolean;
+};
+
+type TechniqueDraft = Technique & { isNew?: boolean };
+
+const createDefaultTechnique = (): Technique => ({
+  id: "triangle-choke",
+  title: "Triangle Choke",
+  category: "Submission",
+  dateIso: new Date().toISOString(),
+  tags: ["Beginner", "Closed Guard"],
+  notes:
+    "A fundamental submission from closed guard. Control opponent's posture, isolate one arm, throw leg over shoulder, and squeeze with your legs while pulling down on the head.",
+  links: [
+    {
+      id: "link-1",
+      title: "How to do the Triangle in Jiu Jitsu | Everything You Need to Know!",
+      url: "https://www.youtube.com/watch?v=2Oj7l",
+    },
+  ],
+  favorite: false,
+});
+
+const cryptoSafeId = () => {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+};
+
+const dedupeStrings = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+
+const formatDateTimeLabel = (iso: string) => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+};
+
+const formatLongDateTimeLabel = (iso: string) => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+};
+
+function categoryDotClass(category: Exclude<TechniqueCategoryKey, "All">) {
+  return (
+    techniqueCategories.find((entry) => entry.key === category)?.dot ??
+    "bg-zinc-400"
+  );
+}
+
+function TechniqueDetailScreen({
+  technique,
+  onBack,
+  onEdit,
+  onToggleFavorite,
+}: {
+  technique: Technique;
+  onBack: () => void;
+  onEdit: () => void;
+  onToggleFavorite: () => void;
+}) {
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={onBack}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <BackIcon />
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Favorite"
+              onClick={onToggleFavorite}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <StarIcon filled={technique.favorite} />
+            </button>
+            <button
+              type="button"
+              aria-label="Edit"
+              onClick={onEdit}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <PencilIcon />
+            </button>
+          </div>
+        </header>
+
+        <main className="mt-8 flex-1 space-y-8">
+          <div className="space-y-2">
+            <div className="flex items-start gap-4">
+              <div className="mt-1 h-10 w-1 rounded-full bg-red-500" />
+              <div className="min-w-0">
+                <h1 className="text-3xl font-semibold">{technique.title}</h1>
+                <p className="mt-1 text-sm font-semibold text-red-400">{technique.category}</p>
+              </div>
+            </div>
+            <div className="mt-6 border-t border-white/10" />
+          </div>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Date</p>
+            <p className="text-sm text-zinc-200">{formatLongDateTimeLabel(technique.dateIso)}</p>
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Tags</p>
+            <div className="flex flex-wrap gap-2">
+              {technique.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Notes</p>
+              <button
+                type="button"
+                aria-label="Edit notes"
+                onClick={onEdit}
+                className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+              >
+                <PencilIcon />
+              </button>
+            </div>
+            <p className="text-sm leading-relaxed text-zinc-200 whitespace-pre-wrap">
+              {technique.notes || "No notes yet."}
+            </p>
+          </section>
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Links &amp; References</p>
+              <button
+                type="button"
+                aria-label="Add link"
+                onClick={onEdit}
+                className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+              >
+                <PlusIcon />
+              </button>
+            </div>
+            {technique.links.length === 0 ? (
+              <p className="text-sm text-zinc-500">No links yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {technique.links.map((link) => (
+                  <div
+                    key={link.id}
+                    className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-zinc-200">{link.title}</p>
+                      <p className="truncate text-xs text-zinc-500">{link.url}</p>
+                    </div>
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-400">
+                      <LinkIcon />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Linked Techniques</p>
+              <button
+                type="button"
+                aria-label="Edit linked techniques"
+                onClick={onEdit}
+                className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+              >
+                <PencilIcon />
+              </button>
+            </div>
+            <p className="text-sm text-zinc-500 italic">No linked techniques yet</p>
+          </section>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function TechniqueEditScreen({
+  draft,
+  onDraftChange,
+  onCancel,
+  onSave,
+  onDelete,
+  onOpenTags,
+}: {
+  draft: TechniqueDraft;
+  onDraftChange: (next: TechniqueDraft) => void;
+  onCancel: () => void;
+  onSave: () => void;
+  onDelete: () => void;
+  onOpenTags: () => void;
+}) {
+  const update = (patch: Partial<TechniqueDraft>) => onDraftChange({ ...draft, ...patch });
+
+  const addLink = () => {
+    update({
+      links: [
+        ...draft.links,
+        { id: `link-${cryptoSafeId()}`, title: "New link", url: "" },
+      ],
+    });
+  };
+
+  const updateLink = (id: string, patch: Partial<TechniqueLink>) => {
+    update({
+      links: draft.links.map((link) => (link.id === id ? { ...link, ...patch } : link)),
+    });
+  };
+
+  const removeLink = (id: string) => {
+    update({ links: draft.links.filter((link) => link.id !== id) });
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-28 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label="Back"
+              onClick={onCancel}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <BackIcon />
+            </button>
+            <p className="text-lg font-semibold text-white">Edit Technique</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Favorite"
+              onClick={() => update({ favorite: !draft.favorite })}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <StarIcon filled={draft.favorite} />
+            </button>
+            <button
+              type="button"
+              aria-label="Delete"
+              onClick={onDelete}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <TrashIcon />
+            </button>
+          </div>
+        </header>
+
+        <main className="mt-8 flex-1 space-y-8">
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Name</p>
+            <input
+              value={draft.title}
+              onChange={(event) => update({ title: event.target.value })}
+              placeholder="Technique name"
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+            />
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Category</p>
+            <button
+              type="button"
+              onClick={() => {}}
+              className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-left"
+            >
+              <span className="flex items-center gap-3">
+                <span className={`h-3 w-3 rounded-full ${categoryDotClass(draft.category)}`} />
+                <span className="text-sm font-semibold text-zinc-200">{draft.category}</span>
+              </span>
+              <ChevronDownSmallIcon />
+            </button>
+            <div className="grid grid-cols-2 gap-2">
+              {techniqueCategories
+                .filter((entry) => entry.key !== "All")
+                .map((entry) => {
+                  const key = entry.key as Exclude<TechniqueCategoryKey, "All">;
+                  const active = key === draft.category;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => update({ category: key })}
+                      className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                        active ? "bg-blue-600 text-white" : "border border-white/10 bg-white/5 text-zinc-200 hover:bg-white/10"
+                      }`}
+                    >
+                      <span className={`h-2.5 w-2.5 rounded-full ${entry.dot}`} aria-hidden="true" />
+                      {entry.label}
+                    </button>
+                  );
+                })}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Tags</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {draft.tags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => update({ tags: draft.tags.filter((value) => value !== tag) })}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+                  aria-label={`Remove tag ${tag}`}
+                >
+                  {tag} <span aria-hidden="true" className="text-zinc-400">×</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                aria-label="Add tags"
+                onClick={onOpenTags}
+                className="grid h-9 w-9 place-items-center rounded-full bg-white text-black transition hover:bg-zinc-200"
+              >
+                <PlusIcon />
+              </button>
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Notes</p>
+            <textarea
+              value={draft.notes}
+              onChange={(event) => update({ notes: event.target.value })}
+              placeholder="Write notes..."
+              className="min-h-[140px] w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-600"
+            />
+          </section>
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Links &amp; References</p>
+              <button
+                type="button"
+                aria-label="Add link"
+                onClick={addLink}
+                className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+              >
+                <PlusIcon />
+              </button>
+            </div>
+
+            {draft.links.length === 0 ? (
+              <input
+                placeholder="Enter reference link..."
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  const value = (event.target as HTMLInputElement).value.trim();
+                  if (!value) return;
+                  update({
+                    links: [
+                      ...draft.links,
+                      { id: `link-${cryptoSafeId()}`, title: value, url: value },
+                    ],
+                  });
+                  (event.target as HTMLInputElement).value = "";
+                }}
+              />
+            ) : (
+              <div className="space-y-3">
+                {draft.links.map((link) => (
+                  <div
+                    key={link.id}
+                    className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-zinc-200">Link</p>
+                      <button
+                        type="button"
+                        aria-label="Remove link"
+                        onClick={() => removeLink(link.id)}
+                        className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-300 transition hover:bg-white/10"
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
+                    <input
+                      value={link.title}
+                      onChange={(event) => updateLink(link.id, { title: event.target.value })}
+                      placeholder="Title"
+                      className="mt-3 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                    />
+                    <input
+                      value={link.url}
+                      onChange={(event) => updateLink(link.id, { url: event.target.value })}
+                      placeholder="URL"
+                      className="mt-3 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                    />
+                    <p className="mt-2 text-xs text-zinc-500">
+                      {draft.links.indexOf(link) + 1}/{draft.links.length} links
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </main>
+
+        <footer className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/92 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-4 sm:px-8">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="h-12 flex-1 rounded-xl bg-white/10 text-sm font-semibold text-zinc-200 transition hover:bg-white/15"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              className="h-12 flex-1 rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
+            >
+              Save
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 function UserIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
@@ -1322,6 +1961,110 @@ function XIcon() {
     <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
       <path
         d="M6 6l12 12M18 6 6 18"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function BackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M15 18 9 12l6-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M12 20h9"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function StarIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+      <path
+        d="M12 17.3 18.2 21l-1.7-7 5.5-4.8-7.2-.6L12 2 9.2 8.6 2 9.2l5.5 4.8L5.8 21z"
+        fill={filled ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M3 6h18"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M8 6V4h8v2"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6 6l1 16h10l1-16"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M12 5v14M5 12h14"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function LinkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M10 13a5 5 0 0 1 0-7l1-1a5 5 0 0 1 7 7l-1 1"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M14 11a5 5 0 0 1 0 7l-1 1a5 5 0 0 1-7-7l1-1"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
