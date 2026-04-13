@@ -515,6 +515,7 @@ function TrendIcon() {
 
 function MainScreen({ name }: { name: string }) {
   const [screen, setScreen] = useState<"list" | "detail" | "edit" | "add" | "import" | "review">("list");
+  const [bottomTab, setBottomTab] = useState<"sessions" | "techniques" | "you">("techniques");
   const [activeTechniqueId, setActiveTechniqueId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"library" | "systems" | "discover">("library");
   const [showTour, setShowTour] = useState(false);
@@ -538,6 +539,21 @@ function MainScreen({ name }: { name: string }) {
   const [importReturnScreen, setImportReturnScreen] = useState<"list" | "add" | "edit">("list");
 
   const [draftTechnique, setDraftTechnique] = useState<TechniqueDraft | null>(null);
+
+  const [sessionsTab, setSessionsTab] = useState<"my_sessions" | "social_feed" | "leaderboards">("my_sessions");
+  const [isSessionFilterOpen, setIsSessionFilterOpen] = useState(false);
+  const [sessionFilters, setSessionFilters] = useState<SessionFilters>({
+    search: "",
+    startDate: "",
+    endDate: "",
+    location: "",
+    submission: "",
+    sessionTypes: [],
+    minSatisfaction: 0,
+  });
+  const [sessionFilterDraft, setSessionFilterDraft] = useState<SessionFilters>(sessionFilters);
+  const [sessionSort, setSessionSort] = useState<"New" | "Old" | "A-Z">("New");
+  const [isSessionSortOpen, setIsSessionSortOpen] = useState(false);
 
   const [techniques, setTechniques] = useState<Technique[]>(() => {
     try {
@@ -605,6 +621,26 @@ function MainScreen({ name }: { name: string }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isFilterOpen]);
+
+  const switchBottomTab = (next: "sessions" | "techniques" | "you") => {
+    setBottomTab(next);
+    setScreen("list");
+    setIsFilterOpen(false);
+    setIsTagsOpen(false);
+    setIsSessionSortOpen(false);
+    setShowTour(false);
+  };
+
+  useEffect(() => {
+    if (!isSessionSortOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsSessionSortOpen(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isSessionSortOpen]);
 
   useEffect(() => {
     try {
@@ -864,6 +900,53 @@ function MainScreen({ name }: { name: string }) {
 
     return { left, top, width, arrowLeft, placeBelow };
   }, [anchorRect]);
+
+  if (bottomTab === "sessions" && screen === "list") {
+    return (
+      <SessionsHomeScreen
+        name={name}
+        tab={sessionsTab}
+        onTabChange={setSessionsTab}
+        filters={sessionFilters}
+        onOpenFilters={() => {
+          setSessionFilterDraft(sessionFilters);
+          setIsSessionFilterOpen(true);
+        }}
+        filterOpen={isSessionFilterOpen}
+        filterDraft={sessionFilterDraft}
+        onFilterDraftChange={setSessionFilterDraft}
+        onCloseFilters={() => setIsSessionFilterOpen(false)}
+        onClearFilters={() =>
+          setSessionFilterDraft({
+            search: "",
+            startDate: "",
+            endDate: "",
+            location: "",
+            submission: "",
+            sessionTypes: [],
+            minSatisfaction: 0,
+          })
+        }
+        onApplyFilters={() => {
+          setSessionFilters(sessionFilterDraft);
+          setIsSessionFilterOpen(false);
+        }}
+        sort={sessionSort}
+        sortOpen={isSessionSortOpen}
+        onToggleSort={() => setIsSessionSortOpen((value) => !value)}
+        onPickSort={(next) => {
+          setSessionSort(next);
+          setIsSessionSortOpen(false);
+        }}
+        onCloseSort={() => setIsSessionSortOpen(false)}
+        onAddSession={() => {}}
+        bottomTab={bottomTab}
+        onBottomTabChange={(next) => {
+          switchBottomTab(next);
+        }}
+      />
+    );
+  }
 
   if (screen === "add") {
     return (
@@ -1216,7 +1299,12 @@ function MainScreen({ name }: { name: string }) {
           <span className="text-3xl leading-none">+</span>
         </button>
 
-        <BottomNav />
+        <BottomNav
+          active={bottomTab}
+          onChange={(next) => {
+            switchBottomTab(next);
+          }}
+        />
 
         {isTagsOpen ? (
           <TagPickerScreen
@@ -1392,19 +1480,43 @@ function MainScreen({ name }: { name: string }) {
   );
 }
 
-function BottomNav() {
+function BottomNav({
+  active,
+  onChange,
+}: {
+  active: "sessions" | "techniques" | "you";
+  onChange: (next: "sessions" | "techniques" | "you") => void;
+}) {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-black/85 backdrop-blur">
       <div className="mx-auto flex max-w-3xl items-center justify-between px-8 py-3 text-xs text-zinc-500">
-        <button type="button" className="flex flex-col items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onChange("sessions")}
+          className={`flex flex-col items-center gap-1 transition ${
+            active === "sessions" ? "text-blue-400" : "text-zinc-500 hover:text-zinc-300"
+          }`}
+        >
           <SessionsIcon />
           Sessions
         </button>
-        <button type="button" className="flex flex-col items-center gap-1 text-blue-400">
+        <button
+          type="button"
+          onClick={() => onChange("techniques")}
+          className={`flex flex-col items-center gap-1 transition ${
+            active === "techniques" ? "text-blue-400" : "text-zinc-500 hover:text-zinc-300"
+          }`}
+        >
           <BookIconFilled />
           Techniques
         </button>
-        <button type="button" className="flex flex-col items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onChange("you")}
+          className={`flex flex-col items-center gap-1 transition ${
+            active === "you" ? "text-blue-400" : "text-zinc-500 hover:text-zinc-300"
+          }`}
+        >
           <ChartIcon />
           You
         </button>
@@ -1793,6 +1905,394 @@ function LinkedTechniquesModal({
           >
             Done
           </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function SessionsHomeScreen({
+  name,
+  tab,
+  onTabChange,
+  filters,
+  onOpenFilters,
+  filterOpen,
+  filterDraft,
+  onFilterDraftChange,
+  onCloseFilters,
+  onClearFilters,
+  onApplyFilters,
+  sort,
+  sortOpen,
+  onToggleSort,
+  onPickSort,
+  onCloseSort,
+  onAddSession,
+  bottomTab,
+  onBottomTabChange,
+}: {
+  name: string;
+  tab: "my_sessions" | "social_feed" | "leaderboards";
+  onTabChange: (value: "my_sessions" | "social_feed" | "leaderboards") => void;
+  filters: SessionFilters;
+  onOpenFilters: () => void;
+  filterOpen: boolean;
+  filterDraft: SessionFilters;
+  onFilterDraftChange: (next: SessionFilters) => void;
+  onCloseFilters: () => void;
+  onClearFilters: () => void;
+  onApplyFilters: () => void;
+  sort: "New" | "Old" | "A-Z";
+  sortOpen: boolean;
+  onToggleSort: () => void;
+  onPickSort: (value: "New" | "Old" | "A-Z") => void;
+  onCloseSort: () => void;
+  onAddSession: () => void;
+  bottomTab: "sessions" | "techniques" | "you";
+  onBottomTabChange: (next: "sessions" | "techniques" | "you") => void;
+}) {
+  const sessionsFound = 0;
+
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200">
+              <UserIcon />
+            </div>
+            <p className="text-lg font-semibold">{name || "You"}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Help"
+              className="grid h-10 w-10 place-items-center rounded-full bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/20"
+            >
+              <HelpIcon />
+            </button>
+            <button
+              type="button"
+              aria-label="Notifications"
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <BellIcon />
+            </button>
+            <button
+              type="button"
+              aria-label="Search"
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <MagnifierIcon />
+            </button>
+          </div>
+        </header>
+
+        <nav className="mt-5 flex items-end justify-between gap-6 border-b border-white/10 pb-3">
+          <button
+            type="button"
+            onClick={() => onTabChange("my_sessions")}
+            className={`relative text-sm font-semibold transition ${
+              tab === "my_sessions" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            My Sessions
+            {tab === "my_sessions" ? (
+              <span className="absolute -bottom-3 left-0 h-0.5 w-16 rounded-full bg-blue-500" />
+            ) : null}
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange("social_feed")}
+            className={`relative text-sm font-semibold transition ${
+              tab === "social_feed" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Social Feed
+            {tab === "social_feed" ? (
+              <span className="absolute -bottom-3 left-0 h-0.5 w-16 rounded-full bg-blue-500" />
+            ) : null}
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange("leaderboards")}
+            className={`relative text-sm font-semibold transition ${
+              tab === "leaderboards" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Leaderboards
+            {tab === "leaderboards" ? (
+              <span className="absolute -bottom-3 left-0 h-0.5 w-16 rounded-full bg-blue-500" />
+            ) : null}
+          </button>
+        </nav>
+
+        {tab !== "my_sessions" ? (
+          <main className="mt-10 flex-1 rounded-3xl border border-white/10 bg-white/5 p-6 text-zinc-300">
+            <p className="text-sm font-semibold text-white">
+              {tab === "social_feed" ? "Social Feed" : "Leaderboards"}
+            </p>
+            <p className="mt-2 text-sm text-zinc-400">Under construction.</p>
+          </main>
+        ) : (
+          <main className="mt-5 flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={onOpenFilters}
+                className="flex flex-1 items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:bg-white/10"
+              >
+                <SearchIcon />
+                <span className={`text-sm ${filters.search ? "text-zinc-200" : "text-zinc-600"}`}>
+                  {filters.search || "Search Sessions"}
+                </span>
+              </button>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={onToggleSort}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+                >
+                  {sort}
+                  <ChevronDownSmallIcon />
+                </button>
+                {sortOpen ? (
+                  <div className="absolute right-0 top-12 w-36 overflow-hidden rounded-xl border border-white/10 bg-zinc-950 shadow-[0_18px_60px_rgba(0,0,0,0.7)]">
+                    {(["New", "Old", "A-Z"] as const).map((option) => {
+                      const active = option === sort;
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => onPickSort(option)}
+                          className={`w-full px-4 py-3 text-left text-xs font-semibold transition ${
+                            active ? "bg-blue-600/25 text-blue-200" : "text-zinc-200 hover:bg-white/5"
+                          }`}
+                        >
+                          {option}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <p className="mt-4 text-xs text-zinc-500">{sessionsFound} sessions found</p>
+
+            <div className="mt-14 text-center">
+              <p className="text-2xl font-semibold text-white">No Training Sessions Yet</p>
+              <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-zinc-400">
+                Use the + button to create your first training session and start tracking your BJJ progress
+              </p>
+            </div>
+          </main>
+        )}
+
+        <button
+          type="button"
+          aria-label="Add session"
+          onClick={onAddSession}
+          className="fixed bottom-24 right-6 grid h-14 w-14 place-items-center rounded-full bg-blue-600 text-white shadow-[0_18px_50px_rgba(0,0,0,0.65)] transition hover:bg-blue-500"
+        >
+          <span className="text-3xl leading-none">+</span>
+        </button>
+
+        <BottomNav active={bottomTab} onChange={onBottomTabChange} />
+
+        {sortOpen ? (
+          <button
+            type="button"
+            aria-label="Close sort menu"
+            className="fixed inset-0 z-30"
+            onClick={onCloseSort}
+          />
+        ) : null}
+
+        {filterOpen ? (
+          <SessionFilterScreen
+            draft={filterDraft}
+            onDraftChange={onFilterDraftChange}
+            onClose={onCloseFilters}
+            onClear={onClearFilters}
+            onApply={onApplyFilters}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SessionFilterScreen({
+  draft,
+  onDraftChange,
+  onClose,
+  onClear,
+  onApply,
+}: {
+  draft: SessionFilters;
+  onDraftChange: (next: SessionFilters) => void;
+  onClose: () => void;
+  onClear: () => void;
+  onApply: () => void;
+}) {
+  const update = (patch: Partial<SessionFilters>) => onDraftChange({ ...draft, ...patch });
+
+  const toggleType = (type: SessionType) => {
+    const active = draft.sessionTypes.includes(type);
+    update({
+      sessionTypes: active
+        ? draft.sessionTypes.filter((item) => item !== type)
+        : [...draft.sessionTypes, type],
+    });
+  };
+
+  const setSatisfaction = (value: number) => update({ minSatisfaction: value });
+
+  const typeStyle = (type: SessionType) => {
+    if (type === "Gi") return "bg-blue-600/20 text-blue-200 ring-1 ring-blue-500/30";
+    if (type === "No-Gi") return "bg-red-600/20 text-red-200 ring-1 ring-red-500/30";
+    if (type === "Open Mat") return "bg-emerald-600/20 text-emerald-200 ring-1 ring-emerald-500/30";
+    if (type === "Wrestling") return "bg-violet-600/20 text-violet-200 ring-1 ring-violet-500/30";
+    if (type === "Competition") return "bg-amber-600/20 text-amber-200 ring-1 ring-amber-500/30";
+    return "bg-white/10 text-zinc-200 ring-1 ring-white/15";
+  };
+
+  const typeInactiveStyle = "bg-white/5 text-zinc-500 ring-1 ring-white/10 hover:bg-white/10 hover:text-zinc-200";
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <p className="text-lg font-semibold text-white">Filter Sessions</p>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <XIcon />
+          </button>
+        </header>
+
+        <main className="mt-6 flex-1 space-y-7">
+          <section className="space-y-2">
+            <p className="text-sm font-semibold text-zinc-200">Search Sessions</p>
+            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+              <SearchIcon />
+              <input
+                value={draft.search}
+                onChange={(event) => update({ search: event.target.value })}
+                placeholder="Search Sessions"
+                className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+              />
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-sm font-semibold text-zinc-200">Date Range</p>
+            <div className="flex items-center gap-3">
+              <input
+                type="date"
+                value={draft.startDate}
+                onChange={(event) => update({ startDate: event.target.value })}
+                className="h-12 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none"
+              />
+              <span className="text-sm text-zinc-500">to</span>
+              <input
+                type="date"
+                value={draft.endDate}
+                onChange={(event) => update({ endDate: event.target.value })}
+                className="h-12 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none"
+              />
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-sm font-semibold text-zinc-200">Location</p>
+            <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+              <input
+                value={draft.location}
+                onChange={(event) => update({ location: event.target.value })}
+                placeholder="Select location..."
+                className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+              />
+              <ChevronDownSmallIcon />
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-sm font-semibold text-zinc-200">Submission</p>
+            <input
+              value={draft.submission}
+              onChange={(event) => update({ submission: event.target.value })}
+              placeholder="Search for specific submissions..."
+              className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+            />
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-sm font-semibold text-zinc-200">Session Type</p>
+            <div className="flex flex-wrap gap-3">
+              {(["Gi", "No-Gi", "Open Mat", "Wrestling", "Competition", "Other"] as const).map((type) => {
+                const active = draft.sessionTypes.includes(type);
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => toggleType(type)}
+                    className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                      active ? typeStyle(type) : typeInactiveStyle
+                    }`}
+                  >
+                    {type}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-sm font-semibold text-zinc-200">Minimum Satisfaction</p>
+            <div className="flex items-center gap-3">
+              {Array.from({ length: 5 }).map((_, index) => {
+                const value = index + 1;
+                const active = value <= draft.minSatisfaction;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-label={`Set minimum satisfaction ${value}`}
+                    onClick={() => setSatisfaction(active && value === draft.minSatisfaction ? 0 : value)}
+                    className={`transition ${active ? "text-white" : "text-zinc-500 hover:text-zinc-300"}`}
+                  >
+                    <StarOutlineIcon filled={active} />
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        </main>
+
+        <footer className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/92 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-4 sm:px-8">
+            <button
+              type="button"
+              onClick={onClear}
+              className="h-12 flex-1 rounded-xl bg-white/10 text-sm font-semibold text-zinc-200 transition hover:bg-white/15"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={onApply}
+              className="h-12 flex-[1.6] rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
+            >
+              Apply Filters
+            </button>
+          </div>
         </footer>
       </div>
     </div>
@@ -2298,6 +2798,18 @@ type Technique = {
 type TechniqueDraft = Technique & { isNew?: boolean };
 
 type ImportCandidate = Technique & { selected: boolean };
+
+type SessionType = "Gi" | "No-Gi" | "Open Mat" | "Wrestling" | "Competition" | "Other";
+
+type SessionFilters = {
+  search: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+  submission: string;
+  sessionTypes: SessionType[];
+  minSatisfaction: number;
+};
 
 const createDefaultTechnique = (): Technique => ({
   id: "triangle-choke",
@@ -3171,6 +3683,20 @@ function StarIcon({ filled }: { filled: boolean }) {
   );
 }
 
+function StarOutlineIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true">
+      <path
+        d="M12 17.3 18.2 21l-1.7-7 5.5-4.8-7.2-.6L12 2 9.2 8.6 2 9.2l5.5 4.8L5.8 21z"
+        fill={filled ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
@@ -3306,6 +3832,68 @@ function MediaIcon() {
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function HelpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M12 17h.01"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M9.1 9a3 3 0 1 1 4.8 2.4c-.9.6-1.4 1.1-1.4 2.6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M14 21a2 2 0 0 1-4 0"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function MagnifierIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M10.5 18a7.5 7.5 0 1 1 7.5-7.5A7.5 7.5 0 0 1 10.5 18z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="M16.2 16.2 21 21"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
       />
     </svg>
   );
