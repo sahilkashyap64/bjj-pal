@@ -6,11 +6,13 @@ import {
   loadSessions,
   loadTechniques,
   loadProfile,
+  loadThemePreference,
   loadTourDone,
   migrateLocalStorageToLocalForageIfNeeded,
   restoreBackup,
   saveSessions,
   saveTechniques,
+  saveThemePreference,
   upsertProfile,
   saveTourDone,
 } from "./lib/storage";
@@ -647,6 +649,7 @@ function MainScreen({ name }: { name: string }) {
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
+  const [themePreference, setThemePreference] = useState<"system" | "dark" | "light">("system");
   const [profileOpen, setProfileOpen] = useState(false);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState<null | {
@@ -1006,17 +1009,19 @@ function MainScreen({ name }: { name: string }) {
     (async () => {
       try {
         await migrateLocalStorageToLocalForageIfNeeded();
-        const [loadedSessions, loadedTechniques, tourDone, loadedProfile] = await Promise.all([
+        const [loadedSessions, loadedTechniques, tourDone, loadedProfile, loadedTheme] = await Promise.all([
           loadSessions<Session>(),
           loadTechniques<Technique>(),
           loadTourDone(),
           loadProfile(),
+          loadThemePreference(),
         ]);
         if (cancelled) return;
         setSessions(normalizeSessions(loadedSessions));
         const normalizedTechniques = normalizeTechniques(loadedTechniques);
         setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
         setProfile(loadedProfile);
+        setThemePreference(loadedTheme);
         setShowTour(!tourDone);
         setTourStep(0);
       } catch {
@@ -1035,16 +1040,18 @@ function MainScreen({ name }: { name: string }) {
 
   const reloadAllFromStorage = async () => {
     await migrateLocalStorageToLocalForageIfNeeded();
-    const [loadedSessions, loadedTechniques, tourDone, loadedProfile] = await Promise.all([
+    const [loadedSessions, loadedTechniques, tourDone, loadedProfile, loadedTheme] = await Promise.all([
       loadSessions<Session>(),
       loadTechniques<Technique>(),
       loadTourDone(),
       loadProfile(),
+      loadThemePreference(),
     ]);
     setSessions(normalizeSessions(loadedSessions));
     const normalizedTechniques = normalizeTechniques(loadedTechniques);
     setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
     setProfile(loadedProfile);
+    setThemePreference(loadedTheme);
     setShowTour(!tourDone);
     setTourStep(0);
   };
@@ -1072,6 +1079,17 @@ function MainScreen({ name }: { name: string }) {
     await restoreBackup(text);
     await reloadAllFromStorage();
     setSettingsMessage("Backup restored.");
+  };
+
+  const applyThemePreference = (next: "system" | "dark" | "light") => {
+    setThemePreference(next);
+    if (next === "system") {
+      const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = prefersDark ? "dark" : "light";
+    } else {
+      document.documentElement.dataset.theme = next;
+    }
+    saveThemePreference(next).catch(() => {});
   };
 
   useEffect(() => {
@@ -2054,6 +2072,30 @@ function MainScreen({ name }: { name: string }) {
                   Your data is stored offline on this device (IndexedDB). Export a backup to share or move to a new
                   phone.
                 </p>
+
+                <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Theme</p>
+                  <div className="mt-3 flex gap-2">
+                    {(["system", "dark", "light"] as const).map((value) => {
+                      const active = themePreference === value;
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          disabled={!storageLoaded}
+                          onClick={() => applyThemePreference(value)}
+                          className={`flex-1 rounded-xl px-4 py-2 text-xs font-semibold transition ${
+                            active
+                              ? "bg-white text-black"
+                              : "bg-white/5 text-zinc-400 ring-1 ring-white/10 hover:bg-white/10 hover:text-zinc-200"
+                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                        >
+                          {value === "system" ? "System" : value === "dark" ? "Dark" : "Light"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 <div className="mt-5 grid gap-3">
                   <button

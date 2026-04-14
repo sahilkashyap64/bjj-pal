@@ -13,6 +13,7 @@ const KEYS = {
   techniques: "bjjpal_techniques_v1",
   tourDone: "bjjpal_tour_done",
   profile: "bjjpal_profile_v1",
+  theme: "bjjpal_theme_v1",
   migrationFlag: "bjjpal_storage_migrated_to_localforage_v1",
 } as const;
 
@@ -106,6 +107,18 @@ export const loadTourDone = async (): Promise<boolean> => {
 
 export const saveTourDone = async (done: boolean) => {
   await store.setItem(KEYS.tourDone, done ? "1" : "0");
+};
+
+export type ThemePreference = "system" | "dark" | "light";
+
+export const loadThemePreference = async (): Promise<ThemePreference> => {
+  const value = await store.getItem<unknown>(KEYS.theme);
+  if (value === "dark" || value === "light" || value === "system") return value;
+  return "system";
+};
+
+export const saveThemePreference = async (next: ThemePreference) => {
+  await store.setItem(KEYS.theme, next);
 };
 
 export type BjjPalProfileV1 = {

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { PwaRegistrar } from "./pwa-registrar";
+import { ThemeRegistrar } from "./theme-registrar";
 
 export const metadata: Metadata = {
   title: "BJJ Pal",
@@ -25,6 +26,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
+        <ThemeRegistrar />
         <PwaRegistrar />
         {children}
       </body>
