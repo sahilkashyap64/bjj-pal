@@ -3723,7 +3723,7 @@ const createDefaultTechnique = (): Technique => ({
     {
       id: "link-1",
       title: "How to do the Triangle in Jiu Jitsu | Everything You Need to Know!",
-      url: "https://www.youtube.com/watch?v=2Oj7l",
+      url: "https://www.youtube.com/watch?v=20j7LcZ5xRY",
     },
   ],
   linkedTechniqueIds: [],
