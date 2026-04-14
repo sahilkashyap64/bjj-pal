@@ -18,6 +18,18 @@ const challenges = [
   "Not sure what my gameplan should be",
 ];
 
+const STORAGE_KEYS = {
+  sessions: "bjjpal_sessions_v1",
+  techniques: "bjjpal_techniques_v1",
+  tourDone: "bjjpal_tour_done",
+} as const;
+
+const LEGACY_STORAGE_KEYS = {
+  sessions: "flowroll_sessions_v1",
+  techniques: "flowroll_techniques_v1",
+  tourDone: "flowroll_tour_done",
+} as const;
+
 export default function Home() {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
@@ -369,11 +381,11 @@ function ReadyScreen({
         <main className="flex flex-1 flex-col justify-center gap-10 pb-4">
           <div className="mx-auto grid place-items-center gap-6">
             <div className="grid h-24 w-24 place-items-center rounded-[26px] bg-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.65)] ring-1 ring-white/15">
-              <FlowRollMark />
+              <BJJPalMark />
             </div>
             <div className="space-y-3 text-center">
               <h1 className="text-4xl font-semibold leading-tight sm:text-5xl">
-                {name.trim() ? `${name.trim()}, ` : ""}FlowRoll is ready!
+                {name.trim() ? `${name.trim()}, ` : ""}BJJ Pal is ready!
               </h1>
               <p className="mx-auto max-w-xl text-base leading-relaxed text-zinc-300 sm:text-lg">
                 As a {beltDescriptor}, we&apos;ll help you build a strong foundation and master the fundamentals.
@@ -439,7 +451,7 @@ function PathItem({
   );
 }
 
-function FlowRollMark() {
+function BJJPalMark() {
   return (
     <svg viewBox="0 0 64 64" className="h-12 w-12" aria-hidden="true">
       <path
@@ -560,7 +572,9 @@ function MainScreen({ name }: { name: string }) {
   const [sessions, setSessions] = useState<Session[]>(() => {
     try {
       if (typeof window === "undefined") return [];
-      const raw = window.localStorage.getItem("flowroll_sessions_v1");
+      const raw =
+        window.localStorage.getItem(STORAGE_KEYS.sessions) ??
+        window.localStorage.getItem(LEGACY_STORAGE_KEYS.sessions);
       if (!raw) return [];
       const parsed = JSON.parse(raw) as Session[];
       if (!Array.isArray(parsed)) return [];
@@ -596,7 +610,9 @@ function MainScreen({ name }: { name: string }) {
   const [techniques, setTechniques] = useState<Technique[]>(() => {
     try {
       if (typeof window === "undefined") return [createDefaultTechnique()];
-      const raw = window.localStorage.getItem("flowroll_techniques_v1");
+      const raw =
+        window.localStorage.getItem(STORAGE_KEYS.techniques) ??
+        window.localStorage.getItem(LEGACY_STORAGE_KEYS.techniques);
       if (!raw) return [createDefaultTechnique()];
       const parsed = JSON.parse(raw) as Technique[];
       if (!Array.isArray(parsed) || parsed.length === 0) return [createDefaultTechnique()];
@@ -682,7 +698,7 @@ function MainScreen({ name }: { name: string }) {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem("flowroll_techniques_v1", JSON.stringify(techniques));
+      window.localStorage.setItem(STORAGE_KEYS.techniques, JSON.stringify(techniques));
     } catch {
       // ignore
     }
@@ -690,7 +706,7 @@ function MainScreen({ name }: { name: string }) {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem("flowroll_sessions_v1", JSON.stringify(sessions));
+      window.localStorage.setItem(STORAGE_KEYS.sessions, JSON.stringify(sessions));
     } catch {
       // ignore
     }
@@ -700,7 +716,10 @@ function MainScreen({ name }: { name: string }) {
     if (typeof window === "undefined") return;
     queueMicrotask(() => {
       try {
-        const done = window.localStorage.getItem("flowroll_tour_done") === "1";
+        const doneValue =
+          window.localStorage.getItem(STORAGE_KEYS.tourDone) ??
+          window.localStorage.getItem(LEGACY_STORAGE_KEYS.tourDone);
+        const done = doneValue === "1";
         setShowTour(!done);
         setTourStep(0);
       } catch {
@@ -749,7 +768,7 @@ function MainScreen({ name }: { name: string }) {
 
   const finishTour = () => {
     try {
-      window.localStorage.setItem("flowroll_tour_done", "1");
+      window.localStorage.setItem(STORAGE_KEYS.tourDone, "1");
     } catch {
       // ignore
     }
@@ -3009,7 +3028,7 @@ function NewSessionScreen({
                 <MediaIcon />
               </div>
               <div className="pt-2">
-                <p className="text-sm text-zinc-500">Share a photo on FlowRoll</p>
+                <p className="text-sm text-zinc-500">Share a photo on BJJ Pal</p>
               </div>
             </div>
           </section>
@@ -5104,7 +5123,7 @@ function VisibilitySheet({
     {
       key: "Everyone",
       title: "Everyone",
-      description: "This session is publicly available to all users on FlowRoll.",
+      description: "This session is publicly available to all users on BJJ Pal.",
     },
     {
       key: "Private",

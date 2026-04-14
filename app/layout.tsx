@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FlowRoll",
+  title: "BJJ Pal",
   description: "BJJ session and technique tracker",
 };
 
