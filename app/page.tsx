@@ -705,6 +705,7 @@ function MainScreen({ name }: { name: string }) {
   const [sessionDraft, setSessionDraft] = useState<SessionDraft | null>(null);
   const [sessionDayIso, setSessionDayIso] = useState<string | null>(null);
   const [sessionDayReturnTab, setSessionDayReturnTab] = useState<"you" | "sessions">("sessions");
+  const [techniqueReturnToSession, setTechniqueReturnToSession] = useState<null | { mode: "new" | "edit" }>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [techniques, setTechniques] = useState<Technique[]>([createDefaultTechnique()]);
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof loadProfile>>>(null);
@@ -736,7 +737,12 @@ function MainScreen({ name }: { name: string }) {
               .filter((entry): entry is SessionSubmissionEntry => Boolean(entry))
           : legacyEntries;
 
-        return { ...session, submissionEntries } as Session;
+        const techniqueIdsRaw = (session as { techniqueIds?: unknown }).techniqueIds;
+        const techniqueIds = Array.isArray(techniqueIdsRaw)
+          ? techniqueIdsRaw.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          : [];
+
+        return { ...session, submissionEntries, techniqueIds } as Session;
       });
   };
 
@@ -1428,6 +1434,21 @@ function MainScreen({ name }: { name: string }) {
       return current.map((technique) => (technique.id === next.id ? next : technique));
     });
 
+    if (techniqueReturnToSession) {
+      setSessionDraft((current) => {
+        if (!current) return current;
+        const existing = Array.isArray(current.techniqueIds) ? current.techniqueIds : [];
+        return { ...current, techniqueIds: dedupeStrings([...existing, next.id]) };
+      });
+      setDraftTechnique(null);
+      setActiveTechniqueId(null);
+      setScreen("list");
+      setBottomTab("sessions");
+      setSessionScreen(techniqueReturnToSession.mode);
+      setTechniqueReturnToSession(null);
+      return;
+    }
+
     setDraftTechnique(null);
     setActiveTechniqueId(next.id);
     setScreen("detail");
@@ -1505,6 +1526,7 @@ function MainScreen({ name }: { name: string }) {
       location: "",
       type: "",
       submissionEntries: [],
+      techniqueIds: [],
       durationMinutes: 90,
       notes: "",
       satisfaction: 0,
@@ -1525,6 +1547,7 @@ function MainScreen({ name }: { name: string }) {
       location: sessionDraft.location.trim(),
       type: sessionDraft.type,
       submissionEntries: sessionDraft.submissionEntries,
+      techniqueIds: Array.isArray(sessionDraft.techniqueIds) ? dedupeStrings(sessionDraft.techniqueIds) : [],
       durationMinutes: sessionDraft.durationMinutes,
       notes: sessionDraft.notes.trim(),
       satisfaction: sessionDraft.satisfaction,
@@ -1557,7 +1580,7 @@ function MainScreen({ name }: { name: string }) {
   };
 
   if (bottomTab === "sessions" && screen === "list") {
-    if (sessionScreen === "new" && sessionDraft) {
+  if (sessionScreen === "new" && sessionDraft) {
       return (
         <NewSessionScreen
           draft={sessionDraft}
@@ -1567,7 +1590,11 @@ function MainScreen({ name }: { name: string }) {
             setSessionScreen("home");
           }}
           onSave={saveSessionDraft}
-          onAddTechnique={() => {}}
+          techniques={techniques}
+          onCreateTechnique={() => {
+            setTechniqueReturnToSession({ mode: "new" });
+            startNewTechniqueDraft();
+          }}
           mode="new"
         />
       );
@@ -1584,7 +1611,11 @@ function MainScreen({ name }: { name: string }) {
             setSessionScreen("home");
           }}
           onSave={saveSessionDraft}
-          onAddTechnique={() => {}}
+          techniques={techniques}
+          onCreateTechnique={() => {
+            setTechniqueReturnToSession({ mode: "edit" });
+            startNewTechniqueDraft();
+          }}
           mode="edit"
           onDelete={() => deleteSession(activeSessionId)}
         />
@@ -1814,6 +1845,13 @@ function MainScreen({ name }: { name: string }) {
           onDraftChange={setDraftTechnique}
           onCancel={() => {
             setDraftTechnique(null);
+            if (techniqueReturnToSession) {
+              setTechniqueReturnToSession(null);
+              setScreen("list");
+              setBottomTab("sessions");
+              setSessionScreen(techniqueReturnToSession.mode);
+              return;
+            }
             setScreen(activeTechniqueId ? "detail" : "list");
           }}
           onSave={saveDraftTechnique}
@@ -3947,7 +3985,8 @@ function NewSessionScreen({
   onDraftChange,
   onCancel,
   onSave,
-  onAddTechnique,
+  techniques,
+  onCreateTechnique,
   mode,
   onDelete,
 }: {
@@ -3955,7 +3994,8 @@ function NewSessionScreen({
   onDraftChange: (next: SessionDraft | null) => void;
   onCancel: () => void;
   onSave: () => void;
-  onAddTechnique: () => void;
+  techniques: Technique[];
+  onCreateTechnique: () => void;
   mode: "new" | "edit";
   onDelete?: () => void;
 }) {
@@ -3965,6 +4005,8 @@ function NewSessionScreen({
   const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [captionOpen, setCaptionOpen] = useState(false);
   const [durationOpen, setDurationOpen] = useState(false);
+  const [techniquePickerOpen, setTechniquePickerOpen] = useState(false);
+  const [techniqueQuery, setTechniqueQuery] = useState("");
   const [submissionQuery, setSubmissionQuery] = useState("");
 
   const formatDuration = (minutes: number) => {
@@ -4015,6 +4057,37 @@ function NewSessionScreen({
     update({
       submissionEntries: draft.submissionEntries.filter((entry) => entry.name !== name),
     });
+  };
+
+  const selectedTechniqueIds = useMemo(
+    () => (Array.isArray(draft.techniqueIds) ? draft.techniqueIds : []),
+    [draft.techniqueIds],
+  );
+
+  const selectedTechniques = useMemo(() => {
+    const map = new Map(techniques.map((technique) => [technique.id, technique]));
+    return selectedTechniqueIds.map((id) => map.get(id)).filter((value): value is Technique => Boolean(value));
+  }, [selectedTechniqueIds, techniques]);
+
+  const filteredTechniques = useMemo(() => {
+    const query = techniqueQuery.trim().toLowerCase();
+    const list = techniques.slice().sort((a, b) => a.title.localeCompare(b.title));
+    if (!query) return list;
+    return list.filter((technique) => {
+      const haystack = `${technique.title} ${technique.category} ${technique.tags.join(" ")}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [techniqueQuery, techniques]);
+
+  const toggleTechnique = (techniqueId: string) => {
+    const current = new Set(selectedTechniqueIds);
+    if (current.has(techniqueId)) current.delete(techniqueId);
+    else current.add(techniqueId);
+    update({ techniqueIds: Array.from(current) });
+  };
+
+  const removeTechnique = (techniqueId: string) => {
+    update({ techniqueIds: selectedTechniqueIds.filter((id) => id !== techniqueId) });
   };
 
   return (
@@ -4281,12 +4354,36 @@ function NewSessionScreen({
 
           <button
             type="button"
-            onClick={onAddTechnique}
+            onClick={() => setTechniquePickerOpen(true)}
             className="mt-2 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-white text-sm font-semibold text-black transition hover:bg-zinc-200"
           >
             <LightningIcon />
             Add Technique
           </button>
+
+          {selectedTechniques.length > 0 ? (
+            <div className="mt-4 space-y-3">
+              {selectedTechniques.map((technique) => (
+                <div
+                  key={technique.id}
+                  className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-blue-600/20 px-4 py-3 shadow-[0_10px_30px_rgba(59,130,246,0.15)]"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-blue-100">{technique.title}</p>
+                    <p className="truncate text-xs text-blue-200/70">{technique.category}</p>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${technique.title}`}
+                    onClick={() => removeTechnique(technique.id)}
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-black/20 text-blue-100 transition hover:bg-white/10"
+                  >
+                    <XIcon />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </main>
 
         <footer className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/92 backdrop-blur">
@@ -4354,6 +4451,94 @@ function NewSessionScreen({
           title="Caption"
           max={500}
         />
+      ) : null}
+
+      {techniquePickerOpen ? (
+        <div className="fixed inset-0 z-50">
+          <button
+            type="button"
+            aria-label="Close technique picker"
+            className="absolute inset-0 bg-black/65"
+            onClick={() => setTechniquePickerOpen(false)}
+          />
+          <div className="absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-white/10 bg-zinc-950 shadow-[0_-30px_90px_rgba(0,0,0,0.9)]">
+            <div className="mx-auto max-w-3xl px-6 pb-8 pt-4">
+              <div className="flex items-center justify-between">
+                <p className="text-lg font-semibold text-white">Add Technique</p>
+                <button
+                  type="button"
+                  onClick={() => setTechniquePickerOpen(false)}
+                  className="text-sm font-semibold text-blue-400 transition hover:text-blue-300"
+                >
+                  Done
+                </button>
+              </div>
+
+              <div className="mt-5 flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <SearchIcon />
+                <input
+                  value={techniqueQuery}
+                  onChange={(event) => setTechniqueQuery(event.target.value)}
+                  placeholder="Search techniques..."
+                  className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                />
+                {techniqueQuery.trim().length > 0 ? (
+                  <button
+                    type="button"
+                    aria-label="Clear technique search"
+                    onClick={() => setTechniqueQuery("")}
+                    className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-200 transition hover:bg-white/10"
+                  >
+                    <XIcon />
+                  </button>
+                ) : null}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTechniquePickerOpen(false);
+                  onCreateTechnique();
+                }}
+                className="mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
+              >
+                <PlusIcon />
+                New Technique
+              </button>
+
+              <div className="mt-4 max-h-[45vh] overflow-auto rounded-2xl border border-white/10 bg-black/20">
+                {filteredTechniques.length === 0 ? (
+                  <p className="px-5 py-6 text-sm text-zinc-500">No techniques found.</p>
+                ) : (
+                  filteredTechniques.map((technique) => {
+                    const active = selectedTechniqueIds.includes(technique.id);
+                    return (
+                      <button
+                        key={technique.id}
+                        type="button"
+                        onClick={() => toggleTechnique(technique.id)}
+                        className="flex w-full items-center justify-between gap-4 border-b border-white/10 px-5 py-4 text-left transition hover:bg-white/5 last:border-b-0"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-zinc-100">{technique.title}</p>
+                          <p className="mt-1 text-xs text-zinc-500">{technique.category}</p>
+                        </div>
+                        <span
+                          className={`grid h-8 w-8 place-items-center rounded-full border ${
+                            active ? "border-blue-500/60 bg-blue-600/20 text-blue-200" : "border-white/10 bg-white/5 text-transparent"
+                          }`}
+                          aria-hidden="true"
+                        >
+                          ✓
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );
@@ -5008,6 +5193,7 @@ type Session = {
   location: string;
   type: SessionType | "";
   submissionEntries: SessionSubmissionEntry[];
+  techniqueIds: string[];
   durationMinutes: number;
   notes: string;
   satisfaction: number;
