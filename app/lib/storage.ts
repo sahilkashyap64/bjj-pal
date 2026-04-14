@@ -14,6 +14,7 @@ const KEYS = {
   tourDone: "bjjpal_tour_done",
   profile: "bjjpal_profile_v1",
   theme: "bjjpal_theme_v1",
+  sessionDefaults: "bjjpal_session_defaults_v1",
   migrationFlag: "bjjpal_storage_migrated_to_localforage_v1",
 } as const;
 
@@ -121,6 +122,54 @@ export const saveThemePreference = async (next: ThemePreference) => {
   await store.setItem(KEYS.theme, next);
 };
 
+export type SessionDefaultsV1 = {
+  version: 1;
+  lastLocation?: string;
+  lastTime?: string; // "HH:MM"
+  recentLocations: string[];
+  partnerNames: string[];
+  lastDurationMinutes?: number;
+  recentDurations?: number[];
+};
+
+export const loadSessionDefaults = async (): Promise<SessionDefaultsV1> => {
+  const value = await store.getItem<unknown>(KEYS.sessionDefaults);
+  if (!value || typeof value !== "object") {
+    return { version: 1, recentLocations: [], partnerNames: [], lastDurationMinutes: 90, recentDurations: [] };
+  }
+  const data = value as Partial<SessionDefaultsV1>;
+  if (data.version !== 1) return { version: 1, recentLocations: [], partnerNames: [], lastDurationMinutes: 90, recentDurations: [] };
+  const recentLocations = Array.isArray(data.recentLocations)
+    ? data.recentLocations.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+  const partnerNames = Array.isArray(data.partnerNames)
+    ? data.partnerNames.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+  const recentDurations = Array.isArray(data.recentDurations)
+    ? data.recentDurations
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
+        .map((value) => Math.max(1, Math.round(value)))
+    : [];
+  const lastDurationMinutes =
+    typeof data.lastDurationMinutes === "number" && Number.isFinite(data.lastDurationMinutes)
+      ? Math.max(0, Math.round(data.lastDurationMinutes))
+      : 90;
+
+  return {
+    version: 1,
+    lastLocation: typeof data.lastLocation === "string" ? data.lastLocation : undefined,
+    lastTime: typeof data.lastTime === "string" ? data.lastTime : undefined,
+    recentLocations,
+    partnerNames,
+    lastDurationMinutes,
+    recentDurations,
+  };
+};
+
+export const saveSessionDefaults = async (next: SessionDefaultsV1) => {
+  await store.setItem(KEYS.sessionDefaults, next);
+};
+
 export type BjjPalProfileV1 = {
   version: 1;
   username?: string;
@@ -181,14 +230,16 @@ export type BjjPalBackupV1 = {
   techniques: unknown[];
   tourDone?: boolean;
   profile?: BjjPalProfileV1;
+  sessionDefaults?: SessionDefaultsV1;
 };
 
 export const createBackup = async (): Promise<BjjPalBackupV1> => {
-  const [sessions, techniques, tourDone, profile] = await Promise.all([
+  const [sessions, techniques, tourDone, profile, sessionDefaults] = await Promise.all([
     loadSessions<unknown>(),
     loadTechniques<unknown>(),
     loadTourDone(),
     loadProfile(),
+    loadSessionDefaults(),
   ]);
 
   return {
@@ -198,6 +249,7 @@ export const createBackup = async (): Promise<BjjPalBackupV1> => {
     techniques,
     tourDone,
     profile: profile ?? undefined,
+    sessionDefaults,
   };
 };
 
@@ -222,6 +274,9 @@ export const restoreBackup = async (raw: string) => {
   }
   if (data.profile) {
     await saveProfile(data.profile);
+  }
+  if (data.sessionDefaults && data.sessionDefaults.version === 1) {
+    await saveSessionDefaults(data.sessionDefaults);
   }
 
   await store.setItem(KEYS.migrationFlag, "1");

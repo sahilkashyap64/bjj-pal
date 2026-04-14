@@ -6,11 +6,13 @@ import {
   loadSessions,
   loadTechniques,
   loadProfile,
+  loadSessionDefaults,
   loadThemePreference,
   loadTourDone,
   migrateLocalStorageToLocalForageIfNeeded,
   restoreBackup,
   saveSessions,
+  saveSessionDefaults,
   saveTechniques,
   saveThemePreference,
   upsertProfile,
@@ -709,6 +711,11 @@ function MainScreen({ name }: { name: string }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [techniques, setTechniques] = useState<Technique[]>([createDefaultTechnique()]);
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof loadProfile>>>(null);
+  const [sessionDefaults, setSessionDefaults] = useState<Awaited<ReturnType<typeof loadSessionDefaults>>>({
+    version: 1,
+    recentLocations: [],
+    partnerNames: [],
+  });
   const backHandlerRef = useRef<() => boolean>(() => false);
 
   const normalizeSessions = (input: Session[]) => {
@@ -1176,12 +1183,13 @@ function MainScreen({ name }: { name: string }) {
     (async () => {
       try {
         await migrateLocalStorageToLocalForageIfNeeded();
-        const [loadedSessions, loadedTechniques, tourDone, loadedProfile, loadedTheme] = await Promise.all([
+        const [loadedSessions, loadedTechniques, tourDone, loadedProfile, loadedTheme, loadedDefaults] = await Promise.all([
           loadSessions<Session>(),
           loadTechniques<Technique>(),
           loadTourDone(),
           loadProfile(),
           loadThemePreference(),
+          loadSessionDefaults(),
         ]);
         if (cancelled) return;
         setSessions(normalizeSessions(loadedSessions));
@@ -1189,6 +1197,7 @@ function MainScreen({ name }: { name: string }) {
         setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
         setProfile(loadedProfile);
         setThemePreference(loadedTheme);
+        setSessionDefaults(loadedDefaults);
         setShowTour(!tourDone);
         setTourStep(0);
       } catch {
@@ -1207,18 +1216,20 @@ function MainScreen({ name }: { name: string }) {
 
   const reloadAllFromStorage = async () => {
     await migrateLocalStorageToLocalForageIfNeeded();
-    const [loadedSessions, loadedTechniques, tourDone, loadedProfile, loadedTheme] = await Promise.all([
+    const [loadedSessions, loadedTechniques, tourDone, loadedProfile, loadedTheme, loadedDefaults] = await Promise.all([
       loadSessions<Session>(),
       loadTechniques<Technique>(),
       loadTourDone(),
       loadProfile(),
       loadThemePreference(),
+      loadSessionDefaults(),
     ]);
     setSessions(normalizeSessions(loadedSessions));
     const normalizedTechniques = normalizeTechniques(loadedTechniques);
     setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
     setProfile(loadedProfile);
     setThemePreference(loadedTheme);
+    setSessionDefaults(loadedDefaults);
     setShowTour(!tourDone);
     setTourStep(0);
   };
@@ -1519,15 +1530,19 @@ function MainScreen({ name }: { name: string }) {
 
   const startNewSession = () => {
     const now = new Date();
+    const defaultLocation = sessionDefaults.lastLocation?.trim() || "";
+    const rawDefaultDuration = sessionDefaults.lastDurationMinutes;
+    const defaultDuration =
+      typeof rawDefaultDuration === "number" && Number.isFinite(rawDefaultDuration) ? Math.max(0, rawDefaultDuration) : 90;
     setSessionDraft({
       id: `session-${cryptoSafeId()}`,
       date: now.toISOString().slice(0, 10),
       time: now.toTimeString().slice(0, 5),
-      location: "",
+      location: defaultLocation,
       type: "",
       submissionEntries: [],
       techniqueIds: [],
-      durationMinutes: 90,
+      durationMinutes: defaultDuration,
       notes: "",
       satisfaction: 0,
       tagFriends: "",
@@ -1562,6 +1577,34 @@ function MainScreen({ name }: { name: string }) {
     });
     setSessionDraft(null);
     setSessionScreen("home");
+
+    const updateDefaults = (current: Awaited<ReturnType<typeof loadSessionDefaults>>) => {
+      const recentLocations = dedupeStrings([next.location, ...(current.recentLocations ?? [])]).slice(0, 8);
+      const partnerNamesFromSession = next.tagFriends
+        .split(/[,\n;]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const partnerNames = dedupeStrings([...(current.partnerNames ?? []), ...partnerNamesFromSession]).slice(0, 50);
+      const nextDuration = Number.isFinite(next.durationMinutes) ? Math.max(0, Math.round(next.durationMinutes)) : 0;
+      const recentDurations = Array.from(
+        new Set([nextDuration, ...(Array.isArray(current.recentDurations) ? current.recentDurations : [])].filter((value) => value > 0)),
+      ).slice(0, 8);
+      return {
+        version: 1 as const,
+        lastLocation: next.location || current.lastLocation,
+        lastTime: next.time || current.lastTime,
+        recentLocations,
+        partnerNames,
+        lastDurationMinutes: nextDuration || current.lastDurationMinutes || 90,
+        recentDurations,
+      };
+    };
+
+    setSessionDefaults((current) => {
+      const updated = updateDefaults(current);
+      saveSessionDefaults(updated).catch(() => {});
+      return updated;
+    });
   };
 
   const deleteSession = (sessionId: string) => {
@@ -1591,6 +1634,9 @@ function MainScreen({ name }: { name: string }) {
           }}
           onSave={saveSessionDraft}
           techniques={techniques}
+          locationSuggestions={sessionDefaults.recentLocations}
+          partnerSuggestions={sessionDefaults.partnerNames}
+          durationSuggestions={sessionDefaults.recentDurations ?? []}
           onCreateTechnique={() => {
             setTechniqueReturnToSession({ mode: "new" });
             startNewTechniqueDraft();
@@ -1612,6 +1658,9 @@ function MainScreen({ name }: { name: string }) {
           }}
           onSave={saveSessionDraft}
           techniques={techniques}
+          locationSuggestions={sessionDefaults.recentLocations}
+          partnerSuggestions={sessionDefaults.partnerNames}
+          durationSuggestions={sessionDefaults.recentDurations ?? []}
           onCreateTechnique={() => {
             setTechniqueReturnToSession({ mode: "edit" });
             startNewTechniqueDraft();
@@ -3986,6 +4035,9 @@ function NewSessionScreen({
   onCancel,
   onSave,
   techniques,
+  locationSuggestions,
+  partnerSuggestions,
+  durationSuggestions,
   onCreateTechnique,
   mode,
   onDelete,
@@ -3995,6 +4047,9 @@ function NewSessionScreen({
   onCancel: () => void;
   onSave: () => void;
   techniques: Technique[];
+  locationSuggestions: string[];
+  partnerSuggestions: string[];
+  durationSuggestions: number[];
   onCreateTechnique: () => void;
   mode: "new" | "edit";
   onDelete?: () => void;
@@ -4008,6 +4063,7 @@ function NewSessionScreen({
   const [techniquePickerOpen, setTechniquePickerOpen] = useState(false);
   const [techniqueQuery, setTechniqueQuery] = useState("");
   const [submissionQuery, setSubmissionQuery] = useState("");
+  const [locationFocused, setLocationFocused] = useState(false);
 
   const formatDuration = (minutes: number) => {
     const hours = Math.floor(minutes / 60);
@@ -4090,6 +4146,14 @@ function NewSessionScreen({
     update({ techniqueIds: selectedTechniqueIds.filter((id) => id !== techniqueId) });
   };
 
+  const filteredLocations = useMemo(() => {
+    const base = Array.isArray(locationSuggestions) ? locationSuggestions : [];
+    const query = draft.location.trim().toLowerCase();
+    const list = base.filter((value) => value.trim().length > 0);
+    if (!query) return list.slice(0, 6);
+    return list.filter((value) => value.toLowerCase().includes(query)).slice(0, 6);
+  }, [draft.location, locationSuggestions]);
+
   return (
     <div className="min-h-screen bg-black text-white">
       <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-28 pt-6 sm:px-8">
@@ -4143,14 +4207,34 @@ function NewSessionScreen({
 
           <section className="space-y-2">
             <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Location</p>
-            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <div className="relative">
+              <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
               <LocationPinIcon />
               <input
                 value={draft.location}
                 onChange={(event) => update({ location: event.target.value })}
+                onFocus={() => setLocationFocused(true)}
+                onBlur={() => setTimeout(() => setLocationFocused(false), 120)}
                 placeholder="Gym name..."
                 className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
               />
+              </div>
+
+              {locationFocused && filteredLocations.length > 0 ? (
+                <div className="absolute left-0 right-0 top-[54px] z-20 overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 shadow-[0_18px_60px_rgba(0,0,0,0.8)]">
+                  {filteredLocations.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => update({ location: value })}
+                      className="w-full px-5 py-4 text-left text-sm font-semibold text-zinc-100 transition hover:bg-white/5"
+                    >
+                      {value}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </section>
 
@@ -4421,6 +4505,7 @@ function NewSessionScreen({
         <TagPartnersModal
           value={draft.tagFriends}
           limit={5}
+          suggestions={partnerSuggestions}
           onChange={(value) => update({ tagFriends: value })}
           onClose={() => setTagPartnersOpen(false)}
         />
@@ -4439,6 +4524,7 @@ function NewSessionScreen({
           valueMinutes={draft.durationMinutes}
           onDone={() => setDurationOpen(false)}
           onChange={(value) => update({ durationMinutes: value })}
+          suggestions={durationSuggestions}
         />
       ) : null}
 
@@ -6599,11 +6685,13 @@ function NotesModal({
 function TagPartnersModal({
   value,
   limit,
+  suggestions,
   onChange,
   onClose,
 }: {
   value: string;
   limit: number;
+  suggestions?: string[];
   onChange: (next: string) => void;
   onClose: () => void;
 }) {
@@ -6623,6 +6711,21 @@ function TagPartnersModal({
 
   const [query, setQuery] = useState("");
   const [partners, setPartners] = useState<string[]>(() => normalize(value));
+
+  const filteredSuggestions = useMemo(() => {
+    const base = Array.isArray(suggestions) ? suggestions : [];
+    const cleaned = base
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .filter((item, index, arr) => arr.findIndex((value) => value.toLowerCase() === item.toLowerCase()) === index);
+
+    const alreadySelected = new Set(partners.map((partner) => partner.toLowerCase()));
+    const queryLower = query.trim().toLowerCase();
+    return cleaned
+      .filter((item) => !alreadySelected.has(item.toLowerCase()))
+      .filter((item) => (queryLower ? item.toLowerCase().includes(queryLower) : true))
+      .slice(0, 8);
+  }, [partners, query, suggestions]);
 
   const addPartner = (name: string) => {
     const trimmed = name.trim();
@@ -6686,6 +6789,26 @@ function TagPartnersModal({
             </button>
           </div>
 
+          {filteredSuggestions.length > 0 ? (
+            <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+              {filteredSuggestions.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  disabled={!canAddMore}
+                  onClick={() => {
+                    if (!canAddMore) return;
+                    addPartner(item);
+                  }}
+                  className="flex w-full items-center justify-between gap-3 border-b border-white/10 px-5 py-4 text-left text-sm font-semibold text-zinc-100 transition hover:bg-white/5 last:border-b-0 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="truncate">{item}</span>
+                  <span className="text-xs font-semibold text-zinc-500">Tap to add</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           {partners.length > 0 ? (
             <div className="mt-5 flex flex-wrap gap-2">
               {partners.map((partner) => (
@@ -6707,7 +6830,7 @@ function TagPartnersModal({
             </div>
           ) : (
             <p className="mt-8 text-center text-sm text-zinc-500">
-              Add partners manually for now.
+              Add partners manually or pick from suggestions.
             </p>
           )}
         </div>
@@ -6799,10 +6922,12 @@ function DurationSheet({
   valueMinutes,
   onChange,
   onDone,
+  suggestions,
 }: {
   valueMinutes: number;
   onChange: (nextMinutes: number) => void;
   onDone: () => void;
+  suggestions?: number[];
 }) {
   const formatDuration = (minutesTotal: number) => {
     const safe = Math.max(0, Math.round(minutesTotal));
@@ -6822,6 +6947,16 @@ function DurationSheet({
 
   const [hours, setHours] = useState(() => Math.floor(Math.max(0, valueMinutes) / 60));
   const [minutes, setMinutes] = useState(() => Math.max(0, valueMinutes) % 60);
+
+  const durationSuggestions = useMemo(() => {
+    const base = Array.isArray(suggestions) ? suggestions : [];
+    const cleaned = base
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
+      .map((value) => Math.max(1, Math.round(value)));
+    const unique = Array.from(new Set(cleaned));
+    if (unique.length > 0) return unique.slice(0, 6);
+    return [60, 90, 120];
+  }, [suggestions]);
 
   const apply = (nextHours: number, nextMinutes: number) => {
     const next = normalize(nextHours, nextMinutes);
@@ -6864,6 +6999,24 @@ function DurationSheet({
             >
               Done
             </button>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            {durationSuggestions.map((suggested) => (
+              <button
+                key={suggested}
+                type="button"
+                onClick={() => {
+                  const next = normalize(Math.floor(suggested / 60), suggested % 60);
+                  setHours(next.hours);
+                  setMinutes(next.minutes);
+                  onChange(next.total);
+                }}
+                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+              >
+                {formatDuration(suggested)}
+              </button>
+            ))}
           </div>
 
           <div className="mt-6 grid grid-cols-2 gap-5">
