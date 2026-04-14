@@ -650,6 +650,10 @@ function MainScreen({ name }: { name: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [themePreference, setThemePreference] = useState<"system" | "dark" | "light">("system");
+  const [youRange, setYouRange] = useState<"All Time" | "This Week" | "This Month" | "This Year">("This Month");
+  const [youRangeOpen, setYouRangeOpen] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [calendarSelectedDate, setCalendarSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [profileOpen, setProfileOpen] = useState(false);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState<null | {
@@ -822,6 +826,149 @@ function MainScreen({ name }: { name: string }) {
     setProfileOpen(true);
   };
 
+  const sessionsInRange = useMemo(() => {
+    if (youRange === "All Time") return sessions;
+    const today = new Date();
+    const start = new Date(today);
+    if (youRange === "This Week") start.setDate(today.getDate() - 6);
+    if (youRange === "This Month") start.setDate(today.getDate() - 29);
+    if (youRange === "This Year") start.setFullYear(today.getFullYear() - 1);
+    start.setHours(0, 0, 0, 0);
+    const startIso = start.toISOString().slice(0, 10);
+    return sessions.filter((session) => typeof session.date === "string" && session.date >= startIso);
+  }, [sessions, youRange]);
+
+  const submissionsInRange = useMemo(() => {
+    return sessionsInRange.reduce((sum, session) => {
+      const entries = Array.isArray(session.submissionEntries) ? session.submissionEntries : [];
+      return (
+        sum +
+        entries.reduce((inner, entry) => inner + (typeof entry.count === "number" && Number.isFinite(entry.count) ? entry.count : 0), 0)
+      );
+    }, 0);
+  }, [sessionsInRange]);
+
+  const totalHoursInRange = useMemo(() => {
+    const minutes = sessionsInRange.reduce(
+      (sum, session) => sum + (typeof session.durationMinutes === "number" && Number.isFinite(session.durationMinutes) ? session.durationMinutes : 0),
+      0,
+    );
+    return minutes / 60;
+  }, [sessionsInRange]);
+
+  const favoriteSubmissions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const session of sessionsInRange) {
+      const entries = Array.isArray(session.submissionEntries) ? session.submissionEntries : [];
+      for (const entry of entries) {
+        const name = typeof entry.name === "string" ? entry.name.trim() : "";
+        if (!name) continue;
+        const add = typeof entry.count === "number" && Number.isFinite(entry.count) ? entry.count : 1;
+        counts.set(name, (counts.get(name) ?? 0) + add);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, count], index) => ({ name, count, rank: index + 1 }));
+  }, [sessionsInRange]);
+
+  const calendar = useMemo(() => {
+    const monthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+    const monthEnd = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0);
+    const monthLabel = monthStart.toLocaleString(undefined, { month: "long", year: "numeric" });
+
+    const startWeekday = monthStart.getDay(); // 0 Sun..6 Sat
+    const totalDays = monthEnd.getDate();
+    const weeks: Array<Array<{ iso: string | null; day: number | null }>> = [];
+
+    let currentWeek: Array<{ iso: string | null; day: number | null }> = [];
+    for (let i = 0; i < startWeekday; i += 1) currentWeek.push({ iso: null, day: null });
+
+    for (let day = 1; day <= totalDays; day += 1) {
+      const d = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
+      const iso = d.toISOString().slice(0, 10);
+      currentWeek.push({ iso, day });
+      if (currentWeek.length === 7) {
+        weeks.push(currentWeek);
+        currentWeek = [];
+      }
+    }
+    if (currentWeek.length > 0) {
+      while (currentWeek.length < 7) currentWeek.push({ iso: null, day: null });
+      weeks.push(currentWeek);
+    }
+
+    const sessionsByDate = new Map<string, { count: number; minutes: number }>();
+    for (const session of sessions) {
+      if (typeof session.date !== "string") continue;
+      const minutes =
+        typeof session.durationMinutes === "number" && Number.isFinite(session.durationMinutes) ? session.durationMinutes : 0;
+      const current = sessionsByDate.get(session.date) ?? { count: 0, minutes: 0 };
+      sessionsByDate.set(session.date, { count: current.count + 1, minutes: current.minutes + minutes });
+    }
+
+    const selected = sessionsByDate.get(calendarSelectedDate) ?? { count: 0, minutes: 0 };
+    return { monthLabel, weeks, sessionsByDate, selected };
+  }, [calendarMonth, calendarSelectedDate, sessions]);
+
+  const hoursSeries = useMemo(() => {
+    const now = new Date();
+    const sessionsByDate = new Map<string, number>();
+    for (const session of sessionsInRange) {
+      if (typeof session.date !== "string") continue;
+      const minutes = typeof session.durationMinutes === "number" && Number.isFinite(session.durationMinutes) ? session.durationMinutes : 0;
+      sessionsByDate.set(session.date, (sessionsByDate.get(session.date) ?? 0) + minutes);
+    }
+
+    if (youRange === "This Week" || youRange === "This Month") {
+      const days = youRange === "This Week" ? 7 : 30;
+      const labels: string[] = [];
+      const values: number[] = [];
+      for (let i = days - 1; i >= 0; i -= 1) {
+        const day = new Date(now);
+        day.setDate(now.getDate() - i);
+        const key = day.toISOString().slice(0, 10);
+        const minutes = sessionsByDate.get(key) ?? 0;
+        labels.push(key.slice(5));
+        values.push(minutes / 60);
+      }
+      return { labels, values };
+    }
+
+    const months = 12;
+    const labels: string[] = [];
+    const values: number[] = [];
+    for (let i = months - 1; i >= 0; i -= 1) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      let minutes = 0;
+      for (const [dateKey, value] of sessionsByDate.entries()) {
+        if (dateKey.startsWith(key)) minutes += value;
+      }
+      labels.push(key.slice(5));
+      values.push(minutes / 60);
+    }
+    return { labels, values };
+  }, [sessionsInRange, youRange]);
+
+  const gotoSessionsForDate = (isoDate: string) => {
+    setBottomTab("sessions");
+    setSessionsTab("my_sessions");
+    const nextFilters: SessionFilters = {
+      ...sessionFilters,
+      startDate: isoDate,
+      endDate: isoDate,
+    };
+    setSessionFilters(nextFilters);
+    setSessionFilterDraft(nextFilters);
+    setSessionScreen("home");
+    setActiveSessionId(null);
+    setIsSessionSortOpen(false);
+    setIsSessionFilterOpen(false);
+    setShowTour(false);
+  };
+
   const tourSteps = useMemo(
     () =>
       [
@@ -871,6 +1018,7 @@ function MainScreen({ name }: { name: string }) {
     setIsFilterOpen(false);
     setIsTagsOpen(false);
     setIsSessionSortOpen(false);
+    setYouRangeOpen(false);
     setShowTour(false);
   };
 
@@ -914,6 +1062,11 @@ function MainScreen({ name }: { name: string }) {
 
     if (isSessionSortOpen) {
       setIsSessionSortOpen(false);
+      return true;
+    }
+
+    if (youRangeOpen) {
+      setYouRangeOpen(false);
       return true;
     }
 
@@ -1653,12 +1806,16 @@ function MainScreen({ name }: { name: string }) {
             >
               <UserIcon />
             </button>
-            <p className="text-lg font-semibold">
-              {(profile?.displayName && profile.displayName.trim()) ||
-                (profile?.name && profile.name.trim()) ||
-                name ||
-                "You"}
-            </p>
+            {bottomTab === "you" ? (
+              <p className="text-lg font-semibold">You</p>
+            ) : (
+              <p className="text-lg font-semibold">
+                {(profile?.displayName && profile.displayName.trim()) ||
+                  (profile?.name && profile.name.trim()) ||
+                  name ||
+                  "You"}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -1670,49 +1827,269 @@ function MainScreen({ name }: { name: string }) {
           </button>
         </header>
 
-        <nav className="mt-5 flex items-end justify-between gap-6 border-b border-white/10 pb-3">
-          <button
-            type="button"
-            onClick={() => setActiveTab("library")}
-            className={`relative text-sm font-semibold transition ${
-              activeTab === "library" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            My Library
-            {activeTab === "library" ? (
-              <span className="absolute -bottom-3 left-0 h-0.5 w-16 rounded-full bg-blue-500" />
-            ) : null}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("systems")}
-            className={`relative text-sm font-semibold transition ${
-              activeTab === "systems" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            Systems{" "}
-            <span className="ml-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300 ring-1 ring-amber-300/30">
-              New
-            </span>
-            {activeTab === "systems" ? (
-              <span className="absolute -bottom-3 left-0 h-0.5 w-14 rounded-full bg-blue-500" />
-            ) : null}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("discover")}
-            className={`relative text-sm font-semibold transition ${
-              activeTab === "discover" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            Discover
-            {activeTab === "discover" ? (
-              <span className="absolute -bottom-3 left-0 h-0.5 w-16 rounded-full bg-blue-500" />
-            ) : null}
-          </button>
-        </nav>
+        {bottomTab !== "you" ? (
+          <nav className="mt-5 flex items-end justify-between gap-6 border-b border-white/10 pb-3">
+            <button
+              type="button"
+              onClick={() => setActiveTab("library")}
+              className={`relative text-sm font-semibold transition ${
+                activeTab === "library" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              My Library
+              {activeTab === "library" ? (
+                <span className="absolute -bottom-3 left-0 h-0.5 w-16 rounded-full bg-blue-500" />
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("systems")}
+              className={`relative text-sm font-semibold transition ${
+                activeTab === "systems" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              Systems{" "}
+              <span className="ml-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300 ring-1 ring-amber-300/30">
+                New
+              </span>
+              {activeTab === "systems" ? (
+                <span className="absolute -bottom-3 left-0 h-0.5 w-14 rounded-full bg-blue-500" />
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("discover")}
+              className={`relative text-sm font-semibold transition ${
+                activeTab === "discover" ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              Discover
+              {activeTab === "discover" ? (
+                <span className="absolute -bottom-3 left-0 h-0.5 w-16 rounded-full bg-blue-500" />
+              ) : null}
+            </button>
+          </nav>
+        ) : null}
 
-        {activeTab === "library" ? (
+        {bottomTab === "you" ? (
+          <main className="mt-6 flex-1 space-y-8">
+            <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
+              <div className="flex items-center justify-between">
+                <p className="text-lg font-semibold text-white">Training Calendar</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label="Previous month"
+                    onClick={() =>
+                      setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))
+                    }
+                    className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-200 transition hover:bg-white/10"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Next month"
+                    onClick={() =>
+                      setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))
+                    }
+                    className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-200 transition hover:bg-white/10"
+                  >
+                    ›
+                  </button>
+                </div>
+              </div>
+
+              <p className="mt-2 text-sm text-zinc-500">{calendar.monthLabel}</p>
+
+              <div className="mt-5 grid grid-cols-7 gap-2 text-center text-[11px] font-semibold text-zinc-500">
+                {["S", "M", "T", "W", "T", "F", "S"].map((label) => (
+                  <span key={label}>{label}</span>
+                ))}
+              </div>
+
+              <div className="mt-3 grid grid-cols-7 gap-2">
+                {calendar.weeks.flat().map((cell, index) => {
+                  if (!cell.iso || !cell.day) {
+                    return <div key={`empty-${index}`} className="h-10 rounded-xl" />;
+                  }
+                  const stats = calendar.sessionsByDate.get(cell.iso);
+                  const selected = cell.iso === calendarSelectedDate;
+                  const hasTraining = Boolean(stats && stats.count > 0);
+
+                  return (
+                    <button
+                      key={cell.iso}
+                      type="button"
+                      onClick={() => setCalendarSelectedDate(cell.iso!)}
+                      className={`relative h-10 rounded-xl text-sm font-semibold transition ${
+                        selected
+                          ? "bg-blue-600 text-white shadow-[0_10px_30px_rgba(59,130,246,0.35)]"
+                          : "bg-black/20 text-zinc-200 hover:bg-white/10"
+                      }`}
+                    >
+                      {cell.day}
+                      {hasTraining ? (
+                        <span
+                          className={`absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full ${
+                            selected ? "bg-white/90" : "bg-blue-400"
+                          }`}
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-5 flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Selected</p>
+                  <p className="mt-2 text-sm font-semibold text-zinc-200">{calendarSelectedDate}</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {calendar.selected.count} session{calendar.selected.count === 1 ? "" : "s"} •{" "}
+                    {Math.round((calendar.selected.minutes / 60) * 10) / 10}h
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={calendar.selected.count === 0}
+                  onClick={() => gotoSessionsForDate(calendarSelectedDate)}
+                  className="rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 ring-1 ring-white/10 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  View Sessions
+                </button>
+              </div>
+            </section>
+
+            <section>
+              <div className="flex items-center justify-between">
+                <p className="text-2xl font-semibold text-white">Analytics</p>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setYouRangeOpen((value) => !value)}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+                  >
+                    {youRange}
+                    <ChevronDownSmallIcon />
+                  </button>
+                  {youRangeOpen ? (
+                    <button
+                      type="button"
+                      aria-label="Close range picker"
+                      className="fixed inset-0 z-20"
+                      onClick={() => setYouRangeOpen(false)}
+                    />
+                  ) : null}
+                  {youRangeOpen ? (
+                    <div className="absolute right-0 top-12 z-30 overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 shadow-[0_18px_60px_rgba(0,0,0,0.8)]">
+                      {(["All Time", "This Week", "This Month", "This Year"] as const).map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => {
+                            setYouRange(option);
+                            setYouRangeOpen(false);
+                          }}
+                          className={`w-full px-5 py-4 text-left text-sm font-semibold transition ${
+                            option === youRange ? "bg-blue-600/25 text-blue-200" : "text-white hover:bg-white/5"
+                          }`}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-4">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
+                  <div className="flex items-center justify-between">
+                    <LightningIcon />
+                    <span className="text-xs font-semibold text-zinc-500">Sessions</span>
+                  </div>
+                  <p className="mt-4 text-3xl font-semibold text-white">{sessionsInRange.length}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
+                  <div className="flex items-center justify-between">
+                    <FlowIcon />
+                    <span className="text-xs font-semibold text-zinc-500">Submissions</span>
+                  </div>
+                  <p className="mt-4 text-3xl font-semibold text-white">{submissionsInRange}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
+                  <div className="flex items-center justify-between">
+                    <ClockIcon />
+                    <span className="text-xs font-semibold text-zinc-500">Hours</span>
+                  </div>
+                  <p className="mt-4 text-3xl font-semibold text-white">
+                    {Math.round(totalHoursInRange * 10) / 10}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
+                  <div className="flex items-center justify-between">
+                    <BookIconFilled />
+                    <span className="text-xs font-semibold text-zinc-500">Techniques</span>
+                  </div>
+                  <p className="mt-4 text-3xl font-semibold text-white">{techniques.length}</p>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <p className="text-lg font-semibold text-white">Favourite Submissions</p>
+              <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-white/5">
+                {favoriteSubmissions.length === 0 ? (
+                  <p className="px-5 py-5 text-sm text-zinc-500">No submissions logged yet.</p>
+                ) : (
+                  favoriteSubmissions.map((item) => (
+                    <div
+                      key={item.name}
+                      className="flex items-center justify-between gap-4 border-b border-white/10 px-5 py-4 last:border-b-0"
+                    >
+                      <p className="text-sm font-semibold text-zinc-200">
+                        <span className="mr-2 text-xs font-bold text-blue-400">#{item.rank}</span>
+                        {item.name}
+                      </p>
+                      <p className="text-sm font-semibold text-zinc-400">{item.count}x</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section>
+              <div className="flex items-center justify-between">
+                <p className="text-lg font-semibold text-white">Total Hours Trained</p>
+                <p className="text-sm font-semibold text-zinc-300">{Math.round(totalHoursInRange)} hrs</p>
+              </div>
+              <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
+                <div className="flex h-28 items-end gap-1">
+                  {(() => {
+                    const max = Math.max(1, ...hoursSeries.values);
+                    return hoursSeries.values.map((value, index) => (
+                      <div
+                        key={`${hoursSeries.labels[index]}-${index}`}
+                        className="flex-1 rounded-full bg-blue-500/70"
+                        style={{ height: `${Math.max(3, (value / max) * 100)}%` }}
+                        title={`${hoursSeries.labels[index]}: ${Math.round(value * 10) / 10}h`}
+                      />
+                    ));
+                  })()}
+                </div>
+                <p className="mt-4 text-xs text-zinc-500">
+                  {youRange === "This Week"
+                    ? "Last 7 days"
+                    : youRange === "This Month"
+                      ? "Last 30 days"
+                      : "Last 12 months"}
+                </p>
+              </div>
+            </section>
+          </main>
+        ) : activeTab === "library" ? (
           <main className="mt-5 flex-1">
             <div className="flex items-center gap-3">
               <div className="flex flex-1 items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
@@ -1848,15 +2225,17 @@ function MainScreen({ name }: { name: string }) {
           </main>
         )}
 
-        <button
-          ref={fabRef}
-          type="button"
-          aria-label="Add technique"
-          onClick={startNewTechnique}
-          className="fixed bottom-24 right-6 grid h-14 w-14 place-items-center rounded-full bg-blue-600 text-white shadow-[0_18px_50px_rgba(0,0,0,0.65)] transition hover:bg-blue-500"
-        >
-          <span className="text-3xl leading-none">+</span>
-        </button>
+        {bottomTab !== "you" ? (
+          <button
+            ref={fabRef}
+            type="button"
+            aria-label="Add technique"
+            onClick={startNewTechnique}
+            className="fixed bottom-24 right-6 grid h-14 w-14 place-items-center rounded-full bg-blue-600 text-white shadow-[0_18px_50px_rgba(0,0,0,0.65)] transition hover:bg-blue-500"
+          >
+            <span className="text-3xl leading-none">+</span>
+          </button>
+        ) : null}
 
         <BottomNav
           active={bottomTab}
@@ -1865,7 +2244,7 @@ function MainScreen({ name }: { name: string }) {
           }}
         />
 
-        {isTagsOpen ? (
+        {bottomTab !== "you" && isTagsOpen ? (
           <TagPickerScreen
             query={tagSearchQuery}
             selected={tagDraftSelected}
@@ -1877,7 +2256,7 @@ function MainScreen({ name }: { name: string }) {
           />
         ) : null}
 
-        {isFilterOpen ? (
+        {bottomTab !== "you" && isFilterOpen ? (
           <div className="fixed inset-0 z-40">
             <button
               type="button"
@@ -1932,7 +2311,7 @@ function MainScreen({ name }: { name: string }) {
           </div>
         ) : null}
 
-        {showTour && popover ? (
+        {bottomTab !== "you" && showTour && popover ? (
           <div className="fixed inset-0 z-50">
             <button
               type="button"
