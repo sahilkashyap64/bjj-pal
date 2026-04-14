@@ -39,6 +39,7 @@ export default function Home() {
   const [stripes, setStripes] = useState(0);
   const [selectedChallenges, setSelectedChallenges] = useState<string[]>([]);
   const [screen, setScreen] = useState<"onboarding" | "ready" | "main">("onboarding");
+  const backHandlerRef = useRef<() => boolean>(() => false);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +80,50 @@ export default function Home() {
       cancelled = true;
     };
   }, []);
+
+  backHandlerRef.current = () => {
+    if (screen === "ready") {
+      setScreen("onboarding");
+      return true;
+    }
+    if (screen === "onboarding" && step > 0) {
+      setStep((current) => Math.max(0, current - 1));
+      return true;
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (screen === "main") return;
+
+    const GUARD_STATE = { bjjpal_back_guard: true } as const;
+    const pushGuard = () => {
+      window.history.pushState(GUARD_STATE, "", window.location.href);
+    };
+
+    if (!window.history.state?.bjjpal_back_guard) {
+      window.history.replaceState(GUARD_STATE, "", window.location.href);
+      pushGuard();
+    }
+
+    const onPopState = () => {
+      const handled = backHandlerRef.current();
+      if (handled) {
+        pushGuard();
+        return;
+      }
+      const exit = window.confirm("Exit BJJ Pal?");
+      if (!exit) {
+        pushGuard();
+        return;
+      }
+      window.history.back();
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [screen]);
 
   const completedSteps = useMemo(() => {
     return [name.trim().length > 0, selectedChallenges.length > 0, stripeOptionsForBelt(belt).includes(stripes)];
@@ -654,6 +699,7 @@ function MainScreen({ name }: { name: string }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [techniques, setTechniques] = useState<Technique[]>([createDefaultTechnique()]);
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof loadProfile>>>(null);
+  const backHandlerRef = useRef<() => boolean>(() => false);
 
   const normalizeSessions = (input: Session[]) => {
     return input
@@ -824,6 +870,124 @@ function MainScreen({ name }: { name: string }) {
     setIsSessionSortOpen(false);
     setShowTour(false);
   };
+
+  backHandlerRef.current = () => {
+    if (editProfileOpen) {
+      setEditProfileOpen(false);
+      setProfileOpen(true);
+      return true;
+    }
+
+    if (profileOpen) {
+      setProfileOpen(false);
+      return true;
+    }
+
+    if (settingsOpen) {
+      setSettingsOpen(false);
+      setSettingsMessage(null);
+      return true;
+    }
+
+    if (showTour) {
+      finishTour();
+      return true;
+    }
+
+    if (isTagsOpen) {
+      closeTags();
+      return true;
+    }
+
+    if (isFilterOpen) {
+      setIsFilterOpen(false);
+      return true;
+    }
+
+    if (isSessionFilterOpen) {
+      setIsSessionFilterOpen(false);
+      return true;
+    }
+
+    if (isSessionSortOpen) {
+      setIsSessionSortOpen(false);
+      return true;
+    }
+
+    if (bottomTab === "sessions") {
+      if (sessionScreen === "new" || sessionScreen === "edit") {
+        setSessionDraft(null);
+        setActiveSessionId(null);
+        setSessionScreen("home");
+        return true;
+      }
+      if (sessionScreen === "detail") {
+        setActiveSessionId(null);
+        setSessionScreen("home");
+        return true;
+      }
+      switchBottomTab("techniques");
+      return true;
+    }
+
+    if (screen !== "list") {
+      if (screen === "detail") {
+        setActiveTechniqueId(null);
+        setScreen("list");
+        return true;
+      }
+      if (screen === "edit") {
+        setDraftTechnique(null);
+        setScreen(activeTechniqueId ? "detail" : "list");
+        return true;
+      }
+
+      setImportCandidates([]);
+      setEditingImportId(null);
+      setIsImportCategoryOpen(false);
+      setImportText("");
+      setScreen("list");
+      return true;
+    }
+
+    if (bottomTab === "you") {
+      switchBottomTab("techniques");
+      return true;
+    }
+
+    return false;
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const GUARD_STATE = { bjjpal_back_guard: true } as const;
+    const pushGuard = () => {
+      window.history.pushState(GUARD_STATE, "", window.location.href);
+    };
+
+    if (!window.history.state?.bjjpal_back_guard) {
+      window.history.replaceState(GUARD_STATE, "", window.location.href);
+      pushGuard();
+    }
+
+    const onPopState = () => {
+      const handled = backHandlerRef.current();
+      if (handled) {
+        pushGuard();
+        return;
+      }
+      const exit = window.confirm("Exit BJJ Pal?");
+      if (!exit) {
+        pushGuard();
+        return;
+      }
+      window.history.back();
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   useEffect(() => {
     if (!isSessionSortOpen) return;
