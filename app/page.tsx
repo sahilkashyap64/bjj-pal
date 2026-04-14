@@ -1934,8 +1934,8 @@ function MainScreen({ name }: { name: string }) {
               <p className="mt-2 text-sm text-zinc-500">{calendar.monthLabel}</p>
 
               <div className="mt-5 grid grid-cols-7 gap-2 text-center text-[11px] font-semibold text-zinc-500">
-                {["S", "M", "T", "W", "T", "F", "S"].map((label) => (
-                  <span key={label}>{label}</span>
+                {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => (
+                  <span key={`${label}-${index}`}>{label}</span>
                 ))}
               </div>
 
