@@ -5181,6 +5181,14 @@ const formatCompactDuration = (minutes: number) => {
   return `${hours}h ${remaining}m`;
 };
 
+const toExternalUrl = (raw: string) => {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (/^[a-zA-Z][a-zA-Z0-9+._-]*:/.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("//")) return `https:${trimmed}`;
+  return `https://${trimmed}`;
+};
+
 const sessionTypePillClass = (type: SessionType) => {
   if (type === "Gi") return "bg-blue-600/20 text-blue-200 ring-1 ring-blue-500/30";
   if (type === "No-Gi") return "bg-red-600/20 text-red-200 ring-1 ring-red-500/30";
@@ -5397,8 +5405,11 @@ function TechniqueDetailScreen({
             ) : (
               <div className="space-y-3">
                 {technique.links.map((link) => (
-                  <div
+                  <a
                     key={link.id}
+                    href={toExternalUrl(link.url)}
+                    target="_blank"
+                    rel="noreferrer"
                     className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
                   >
                     <div className="min-w-0">
@@ -5408,7 +5419,7 @@ function TechniqueDetailScreen({
                     <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-400">
                       <LinkIcon />
                     </span>
-                  </div>
+                  </a>
                 ))}
               </div>
             )}
@@ -5677,10 +5688,15 @@ function TechniqueEditScreen({
                     key={link.id}
                     className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
                   >
-                    <div className="min-w-0">
+                    <a
+                      href={toExternalUrl(link.url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 flex-1"
+                    >
                       <p className="truncate text-sm font-semibold text-zinc-200">{link.title}</p>
                       <p className="truncate text-xs text-zinc-500">{link.url}</p>
-                    </div>
+                    </a>
                     <button
                       type="button"
                       aria-label="Remove link"
