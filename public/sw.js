@@ -1,4 +1,4 @@
-const CACHE_NAME = "bjj-pal-static-v1";
+const CACHE_NAME = "bjj-pal-static-v2";
 
 const toUrl = (path) => new URL(path, self.registration.scope).toString();
 
@@ -37,6 +37,26 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  // Always prefer the network for Next.js build assets so updates don't get stuck on stale chunks.
+  if (url.pathname.startsWith("/_next/")) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(CACHE_NAME);
+        try {
+          const response = await fetch(request);
+          if (response && response.status === 200) {
+            cache.put(request, response.clone());
+          }
+          return response;
+        } catch {
+          const cached = await cache.match(request);
+          return cached ?? Response.error();
+        }
+      })(),
+    );
+    return;
+  }
 
   if (request.mode === "navigate") {
     event.respondWith(
