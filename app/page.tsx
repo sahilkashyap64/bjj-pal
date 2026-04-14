@@ -2789,6 +2789,7 @@ function NewSessionScreen({
   const [tagPartnersOpen, setTagPartnersOpen] = useState(false);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [captionOpen, setCaptionOpen] = useState(false);
+  const [durationOpen, setDurationOpen] = useState(false);
   const [submissionQuery, setSubmissionQuery] = useState("");
 
   const formatDuration = (minutes: number) => {
@@ -3008,17 +3009,14 @@ function NewSessionScreen({
 
           <section className="space-y-2">
             <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Duration</p>
-            <select
-              value={draft.durationMinutes}
-              onChange={(event) => update({ durationMinutes: Number(event.target.value) })}
-              className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none"
+            <button
+              type="button"
+              onClick={() => setDurationOpen(true)}
+              className="flex h-12 w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none transition hover:bg-white/10"
             >
-              {[30, 60, 90, 120, 150, 180].map((minutes) => (
-                <option key={minutes} value={minutes}>
-                  {formatDuration(minutes)}
-                </option>
-              ))}
-            </select>
+              <span>{formatDuration(draft.durationMinutes)}</span>
+              <ChevronDownSmallIcon />
+            </button>
           </section>
 
           <section className="space-y-3">
@@ -3158,6 +3156,14 @@ function NewSessionScreen({
           value={draft.visibility}
           onChange={(value) => update({ visibility: value })}
           onDone={() => setVisibilityOpen(false)}
+        />
+      ) : null}
+
+      {durationOpen ? (
+        <DurationSheet
+          valueMinutes={draft.durationMinutes}
+          onDone={() => setDurationOpen(false)}
+          onChange={(value) => update({ durationMinutes: value })}
         />
       ) : null}
 
@@ -5174,6 +5180,149 @@ function VisibilitySheet({
               );
             })}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DurationSheet({
+  valueMinutes,
+  onChange,
+  onDone,
+}: {
+  valueMinutes: number;
+  onChange: (nextMinutes: number) => void;
+  onDone: () => void;
+}) {
+  const formatDuration = (minutesTotal: number) => {
+    const safe = Math.max(0, Math.round(minutesTotal));
+    const hours = Math.floor(safe / 60);
+    const minutes = safe % 60;
+    if (hours === 0) return `${minutes} min`;
+    if (minutes === 0) return `${hours} hr`;
+    return `${hours} hr ${minutes} min`;
+  };
+
+  const normalize = (hoursRaw: number, minutesRaw: number) => {
+    const safeHours = Number.isFinite(hoursRaw) ? hoursRaw : 0;
+    const safeMinutes = Number.isFinite(minutesRaw) ? minutesRaw : 0;
+    const total = Math.max(0, Math.round(safeHours * 60 + safeMinutes));
+    return { hours: Math.floor(total / 60), minutes: total % 60, total };
+  };
+
+  const [hours, setHours] = useState(() => Math.floor(Math.max(0, valueMinutes) / 60));
+  const [minutes, setMinutes] = useState(() => Math.max(0, valueMinutes) % 60);
+
+  const apply = (nextHours: number, nextMinutes: number) => {
+    const next = normalize(nextHours, nextMinutes);
+    setHours(next.hours);
+    setMinutes(next.minutes);
+  };
+
+  const addMinutes = (delta: number) => {
+    apply(hours, minutes + delta);
+  };
+
+  const addHours = (delta: number) => {
+    apply(hours + delta, minutes);
+  };
+
+  const save = () => {
+    const next = normalize(hours, minutes);
+    onChange(next.total);
+    onDone();
+  };
+
+  const current = normalize(hours, minutes);
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        aria-label="Close duration"
+        className="absolute inset-0 bg-black/55"
+        onClick={save}
+      />
+      <div className="absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-white/10 bg-zinc-950 shadow-[0_-30px_90px_rgba(0,0,0,0.9)]">
+        <div className="mx-auto max-w-3xl px-6 pb-8 pt-4">
+          <div className="flex items-center justify-between">
+            <p className="text-lg font-semibold text-white">Duration</p>
+            <button
+              type="button"
+              onClick={save}
+              className="text-sm font-semibold text-blue-400 transition hover:text-blue-300"
+            >
+              Done
+            </button>
+          </div>
+
+          <div className="mt-6 grid grid-cols-2 gap-5">
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">HR</p>
+              <input
+                inputMode="numeric"
+                type="number"
+                min={0}
+                max={24}
+                value={hours}
+                onChange={(event) => apply(Number(event.target.value), minutes)}
+                className="mt-3 h-14 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-2xl font-semibold text-zinc-100 outline-none"
+              />
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">MIN</p>
+              <input
+                inputMode="numeric"
+                type="number"
+                min={0}
+                max={59}
+                value={minutes}
+                onChange={(event) => apply(hours, Number(event.target.value))}
+                className="mt-3 h-14 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-2xl font-semibold text-zinc-100 outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => addMinutes(-5)}
+              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+            >
+              -5 min
+            </button>
+            <button
+              type="button"
+              onClick={() => addMinutes(5)}
+              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+            >
+              +5 min
+            </button>
+            <button
+              type="button"
+              onClick={() => addMinutes(15)}
+              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+            >
+              +15 min
+            </button>
+            <button
+              type="button"
+              onClick={() => addMinutes(30)}
+              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+            >
+              +30 min
+            </button>
+            <button
+              type="button"
+              onClick={() => addHours(1)}
+              className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+            >
+              +1 hr
+            </button>
+          </div>
+
+          <p className="mt-5 text-sm text-zinc-400">Total: {formatDuration(current.total)}</p>
         </div>
       </div>
     </div>
