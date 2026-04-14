@@ -24,6 +24,51 @@ const LEGACY_KEYS = {
   tourDone: "flowroll_tour_done",
 } as const;
 
+const VOICE_NOTE_PREFIX = "bjjpal_voice_note_v1:" as const;
+
+export type VoiceNoteV1 = {
+  version: 1;
+  blob: Blob;
+  mimeType: string;
+  createdAt: string;
+  durationMs?: number;
+};
+
+const voiceNoteKey = (id: string) => `${VOICE_NOTE_PREFIX}${id}`;
+
+export const saveVoiceNote = async (id: string, blob: Blob, durationMs?: number) => {
+  const record: VoiceNoteV1 = {
+    version: 1,
+    blob,
+    mimeType: blob.type || "audio/webm",
+    createdAt: new Date().toISOString(),
+    durationMs: typeof durationMs === "number" && Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : undefined,
+  };
+  await store.setItem(voiceNoteKey(id), record);
+};
+
+export const loadVoiceNote = async (id: string): Promise<VoiceNoteV1 | null> => {
+  const value = await store.getItem<unknown>(voiceNoteKey(id));
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<VoiceNoteV1>;
+  if (record.version !== 1) return null;
+  if (!(record.blob instanceof Blob)) return null;
+  if (typeof record.mimeType !== "string") return null;
+  if (typeof record.createdAt !== "string") return null;
+  if (record.durationMs != null && (typeof record.durationMs !== "number" || !Number.isFinite(record.durationMs))) return null;
+  return {
+    version: 1,
+    blob: record.blob,
+    mimeType: record.mimeType,
+    createdAt: record.createdAt,
+    durationMs: record.durationMs,
+  };
+};
+
+export const deleteVoiceNote = async (id: string) => {
+  await store.removeItem(voiceNoteKey(id));
+};
+
 const safeParseJson = (raw: string) => {
   try {
     return JSON.parse(raw) as unknown;
@@ -130,15 +175,34 @@ export type SessionDefaultsV1 = {
   partnerNames: string[];
   lastDurationMinutes?: number;
   recentDurations?: number[];
+  seededExampleSession?: boolean;
+  transcriptLanguage?: string;
 };
 
 export const loadSessionDefaults = async (): Promise<SessionDefaultsV1> => {
   const value = await store.getItem<unknown>(KEYS.sessionDefaults);
   if (!value || typeof value !== "object") {
-    return { version: 1, recentLocations: [], partnerNames: [], lastDurationMinutes: 90, recentDurations: [] };
+    return {
+      version: 1,
+      recentLocations: [],
+      partnerNames: [],
+      lastDurationMinutes: 90,
+      recentDurations: [],
+      seededExampleSession: false,
+      transcriptLanguage: undefined,
+    };
   }
   const data = value as Partial<SessionDefaultsV1>;
-  if (data.version !== 1) return { version: 1, recentLocations: [], partnerNames: [], lastDurationMinutes: 90, recentDurations: [] };
+  if (data.version !== 1)
+    return {
+      version: 1,
+      recentLocations: [],
+      partnerNames: [],
+      lastDurationMinutes: 90,
+      recentDurations: [],
+      seededExampleSession: false,
+      transcriptLanguage: undefined,
+    };
   const recentLocations = Array.isArray(data.recentLocations)
     ? data.recentLocations.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
     : [];
@@ -163,6 +227,10 @@ export const loadSessionDefaults = async (): Promise<SessionDefaultsV1> => {
     partnerNames,
     lastDurationMinutes,
     recentDurations,
+    seededExampleSession: typeof data.seededExampleSession === "boolean" ? data.seededExampleSession : false,
+    transcriptLanguage: typeof data.transcriptLanguage === "string" && data.transcriptLanguage.trim().length > 0
+      ? data.transcriptLanguage.trim()
+      : undefined,
   };
 };
 

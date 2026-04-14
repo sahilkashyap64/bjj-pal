@@ -7,6 +7,7 @@ import {
   loadTechniques,
   loadProfile,
   loadSessionDefaults,
+  loadVoiceNote,
   loadThemePreference,
   loadTourDone,
   migrateLocalStorageToLocalForageIfNeeded,
@@ -16,7 +17,9 @@ import {
   saveTechniques,
   saveThemePreference,
   upsertProfile,
+  saveVoiceNote,
   saveTourDone,
+  deleteVoiceNote,
 } from "./lib/storage";
 
 const belts = ["White", "Blue", "Purple", "Brown", "Black"] as const;
@@ -715,6 +718,10 @@ function MainScreen({ name }: { name: string }) {
     version: 1,
     recentLocations: [],
     partnerNames: [],
+    recentDurations: [],
+    lastDurationMinutes: 90,
+    seededExampleSession: false,
+    transcriptLanguage: undefined,
   });
   const backHandlerRef = useRef<() => boolean>(() => false);
 
@@ -749,7 +756,32 @@ function MainScreen({ name }: { name: string }) {
           ? techniqueIdsRaw.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
           : [];
 
-        return { ...session, submissionEntries, techniqueIds } as Session;
+        const voiceNoteIdRaw = (session as { voiceNoteId?: unknown }).voiceNoteId;
+        const voiceNoteId =
+          typeof voiceNoteIdRaw === "string" && voiceNoteIdRaw.trim().length > 0 ? voiceNoteIdRaw.trim() : null;
+
+        const voiceNoteTranscriptRaw = (session as { voiceNoteTranscript?: unknown }).voiceNoteTranscript;
+        const voiceNoteTranscript =
+          typeof voiceNoteTranscriptRaw === "string" && voiceNoteTranscriptRaw.trim().length > 0
+            ? voiceNoteTranscriptRaw
+            : null;
+
+        const voiceNoteTranscriptRomanizedRaw = (session as { voiceNoteTranscriptRomanized?: unknown }).voiceNoteTranscriptRomanized;
+        const voiceNoteTranscriptRomanized =
+          typeof voiceNoteTranscriptRomanizedRaw === "string" && voiceNoteTranscriptRomanizedRaw.trim().length > 0
+            ? voiceNoteTranscriptRomanizedRaw
+            : voiceNoteTranscript
+              ? romanizeHindiTranscript(voiceNoteTranscript)
+              : null;
+
+        return {
+          ...session,
+          submissionEntries,
+          techniqueIds,
+          voiceNoteId,
+          voiceNoteTranscript,
+          voiceNoteTranscriptRomanized,
+        } as Session;
       });
   };
 
@@ -1192,12 +1224,71 @@ function MainScreen({ name }: { name: string }) {
           loadSessionDefaults(),
         ]);
         if (cancelled) return;
-        setSessions(normalizeSessions(loadedSessions));
+        const normalizedSessions = normalizeSessions(loadedSessions);
+        const seedExampleSession =
+          normalizedSessions.length === 0 && loadedDefaults && loadedDefaults.seededExampleSession !== true;
+        if (seedExampleSession) {
+          const now = new Date();
+          const exampleNotes = `🟢 What worked:
+
+* Frames helped me create space in side control
+
+🔴 I lost because:
+
+* Elbows too wide → gave underhook
+
+🎯 Next session focus:
+
+* Keep elbows tight ALWAYS
+
+🎮 Mini-game:
+
+* Survive side control 20 sec every roll
+
+🧠 Pattern:
+
+* I panic when stuck`;
+          const exampleLocation = (loadedDefaults.lastLocation && loadedDefaults.lastLocation.trim()) || "Crosstrain";
+          const exampleSession: Session = {
+            id: "session-example-notes",
+            date: now.toISOString().slice(0, 10),
+            time: now.toTimeString().slice(0, 5),
+            location: exampleLocation,
+            type: "No-Gi",
+            submissionEntries: [],
+            techniqueIds: [],
+            durationMinutes: 90,
+            notes: exampleNotes,
+            voiceNoteId: null,
+            voiceNoteTranscript: null,
+            voiceNoteTranscriptRomanized: null,
+            satisfaction: 0,
+            tagFriends: "",
+            visibility: "Private",
+            caption: "",
+          };
+          setSessions([exampleSession]);
+
+          const seededDefaults = {
+            ...loadedDefaults,
+            seededExampleSession: true,
+            lastLocation: exampleLocation,
+            recentLocations: dedupeStrings([exampleLocation, ...(loadedDefaults.recentLocations ?? [])]).slice(0, 8),
+            lastDurationMinutes: typeof loadedDefaults.lastDurationMinutes === "number" ? loadedDefaults.lastDurationMinutes : 90,
+            recentDurations: Array.from(
+              new Set([90, ...(Array.isArray(loadedDefaults.recentDurations) ? loadedDefaults.recentDurations : [])].filter((value) => value > 0)),
+            ).slice(0, 8),
+          };
+          setSessionDefaults(seededDefaults);
+          saveSessionDefaults(seededDefaults).catch(() => {});
+        } else {
+          setSessions(normalizedSessions);
+          setSessionDefaults(loadedDefaults);
+        }
         const normalizedTechniques = normalizeTechniques(loadedTechniques);
         setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
         setProfile(loadedProfile);
         setThemePreference(loadedTheme);
-        setSessionDefaults(loadedDefaults);
         setShowTour(!tourDone);
         setTourStep(0);
       } catch {
@@ -1224,12 +1315,71 @@ function MainScreen({ name }: { name: string }) {
       loadThemePreference(),
       loadSessionDefaults(),
     ]);
-    setSessions(normalizeSessions(loadedSessions));
+    const normalizedSessions = normalizeSessions(loadedSessions);
+    const seedExampleSession =
+      normalizedSessions.length === 0 && loadedDefaults && loadedDefaults.seededExampleSession !== true;
+    if (seedExampleSession) {
+      const now = new Date();
+      const exampleNotes = `🟢 What worked:
+
+* Frames helped me create space in side control
+
+🔴 I lost because:
+
+* Elbows too wide → gave underhook
+
+🎯 Next session focus:
+
+* Keep elbows tight ALWAYS
+
+🎮 Mini-game:
+
+* Survive side control 20 sec every roll
+
+🧠 Pattern:
+
+* I panic when stuck`;
+      const exampleLocation = (loadedDefaults.lastLocation && loadedDefaults.lastLocation.trim()) || "Crosstrain";
+      const exampleSession: Session = {
+        id: "session-example-notes",
+        date: now.toISOString().slice(0, 10),
+        time: now.toTimeString().slice(0, 5),
+        location: exampleLocation,
+        type: "No-Gi",
+        submissionEntries: [],
+        techniqueIds: [],
+        durationMinutes: 90,
+        notes: exampleNotes,
+        voiceNoteId: null,
+        voiceNoteTranscript: null,
+        voiceNoteTranscriptRomanized: null,
+        satisfaction: 0,
+        tagFriends: "",
+        visibility: "Private",
+        caption: "",
+      };
+      setSessions([exampleSession]);
+
+      const seededDefaults = {
+        ...loadedDefaults,
+        seededExampleSession: true,
+        lastLocation: exampleLocation,
+        recentLocations: dedupeStrings([exampleLocation, ...(loadedDefaults.recentLocations ?? [])]).slice(0, 8),
+        lastDurationMinutes: typeof loadedDefaults.lastDurationMinutes === "number" ? loadedDefaults.lastDurationMinutes : 90,
+        recentDurations: Array.from(
+          new Set([90, ...(Array.isArray(loadedDefaults.recentDurations) ? loadedDefaults.recentDurations : [])].filter((value) => value > 0)),
+        ).slice(0, 8),
+      };
+      setSessionDefaults(seededDefaults);
+      saveSessionDefaults(seededDefaults).catch(() => {});
+    } else {
+      setSessions(normalizedSessions);
+      setSessionDefaults(loadedDefaults);
+    }
     const normalizedTechniques = normalizeTechniques(loadedTechniques);
     setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
     setProfile(loadedProfile);
     setThemePreference(loadedTheme);
-    setSessionDefaults(loadedDefaults);
     setShowTour(!tourDone);
     setTourStep(0);
   };
@@ -1544,6 +1694,9 @@ function MainScreen({ name }: { name: string }) {
       techniqueIds: [],
       durationMinutes: defaultDuration,
       notes: "",
+      voiceNoteId: null,
+      voiceNoteTranscript: null,
+      voiceNoteTranscriptRomanized: null,
       satisfaction: 0,
       tagFriends: "",
       visibility: "Everyone",
@@ -1565,6 +1718,15 @@ function MainScreen({ name }: { name: string }) {
       techniqueIds: Array.isArray(sessionDraft.techniqueIds) ? dedupeStrings(sessionDraft.techniqueIds) : [],
       durationMinutes: sessionDraft.durationMinutes,
       notes: sessionDraft.notes.trim(),
+      voiceNoteId: typeof sessionDraft.voiceNoteId === "string" && sessionDraft.voiceNoteId.trim() ? sessionDraft.voiceNoteId.trim() : null,
+      voiceNoteTranscript:
+        typeof sessionDraft.voiceNoteTranscript === "string" && sessionDraft.voiceNoteTranscript.trim()
+          ? sessionDraft.voiceNoteTranscript.trim()
+          : null,
+      voiceNoteTranscriptRomanized:
+        typeof sessionDraft.voiceNoteTranscriptRomanized === "string" && sessionDraft.voiceNoteTranscriptRomanized.trim()
+          ? sessionDraft.voiceNoteTranscriptRomanized.trim()
+          : null,
       satisfaction: sessionDraft.satisfaction,
       tagFriends: sessionDraft.tagFriends.trim(),
       visibility: sessionDraft.visibility,
@@ -1597,6 +1759,8 @@ function MainScreen({ name }: { name: string }) {
         partnerNames,
         lastDurationMinutes: nextDuration || current.lastDurationMinutes || 90,
         recentDurations,
+        seededExampleSession: current.seededExampleSession,
+        transcriptLanguage: current.transcriptLanguage,
       };
     };
 
@@ -1607,7 +1771,24 @@ function MainScreen({ name }: { name: string }) {
     });
   };
 
+  const setTranscriptLanguagePreference = (language: string) => {
+    setSessionDefaults((current) => {
+      const trimmed = language.trim();
+      const updated = {
+        ...current,
+        transcriptLanguage: trimmed || undefined,
+      };
+      saveSessionDefaults(updated).catch(() => {});
+      return updated;
+    });
+  };
+
   const deleteSession = (sessionId: string) => {
+    const existing = sessions.find((session) => session.id === sessionId);
+    const voiceNoteId = typeof existing?.voiceNoteId === "string" ? existing.voiceNoteId : "";
+    if (voiceNoteId) {
+      deleteVoiceNote(voiceNoteId).catch(() => {});
+    }
     setSessions((current) => current.filter((session) => session.id !== sessionId));
     setSessionDraft(null);
     setActiveSessionId(null);
@@ -1637,6 +1818,8 @@ function MainScreen({ name }: { name: string }) {
           locationSuggestions={sessionDefaults.recentLocations}
           partnerSuggestions={sessionDefaults.partnerNames}
           durationSuggestions={sessionDefaults.recentDurations ?? []}
+          transcriptLanguage={sessionDefaults.transcriptLanguage}
+          onTranscriptLanguageChange={setTranscriptLanguagePreference}
           onCreateTechnique={() => {
             setTechniqueReturnToSession({ mode: "new" });
             startNewTechniqueDraft();
@@ -1661,6 +1844,8 @@ function MainScreen({ name }: { name: string }) {
           locationSuggestions={sessionDefaults.recentLocations}
           partnerSuggestions={sessionDefaults.partnerNames}
           durationSuggestions={sessionDefaults.recentDurations ?? []}
+          transcriptLanguage={sessionDefaults.transcriptLanguage}
+          onTranscriptLanguageChange={setTranscriptLanguagePreference}
           onCreateTechnique={() => {
             setTechniqueReturnToSession({ mode: "edit" });
             startNewTechniqueDraft();
@@ -4005,6 +4190,18 @@ function SessionDetailScreen({
             </p>
           </section>
 
+          {session.voiceNoteId ? (
+            <section className="space-y-2">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Voice Note</p>
+              <VoiceNotePlayer
+                voiceNoteId={session.voiceNoteId}
+                transcript={session.voiceNoteTranscript}
+                romanizedTranscript={session.voiceNoteTranscriptRomanized}
+              />
+              <p className="text-xs text-zinc-500">Tip: edit the session to delete or replace this recording.</p>
+            </section>
+          ) : null}
+
           <section className="space-y-3">
             <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Satisfaction Rating</p>
             <div className="flex items-center gap-3">
@@ -4038,6 +4235,8 @@ function NewSessionScreen({
   locationSuggestions,
   partnerSuggestions,
   durationSuggestions,
+  transcriptLanguage,
+  onTranscriptLanguageChange,
   onCreateTechnique,
   mode,
   onDelete,
@@ -4050,6 +4249,8 @@ function NewSessionScreen({
   locationSuggestions: string[];
   partnerSuggestions: string[];
   durationSuggestions: number[];
+  transcriptLanguage?: string;
+  onTranscriptLanguageChange: (language: string) => void;
   onCreateTechnique: () => void;
   mode: "new" | "edit";
   onDelete?: () => void;
@@ -4064,6 +4265,66 @@ function NewSessionScreen({
   const [techniqueQuery, setTechniqueQuery] = useState("");
   const [submissionQuery, setSubmissionQuery] = useState("");
   const [locationFocused, setLocationFocused] = useState(false);
+  const [voiceToast, setVoiceToast] = useState<null | { message: string; at: number }>(null);
+  const voiceToastTimeoutRef = useRef<number | null>(null);
+
+  const sessionNotesTemplate = useMemo(() => {
+    return [
+      "🟢 What worked:",
+      "",
+      "* ",
+      "",
+      "🔴 I lost because:",
+      "",
+      "* ",
+      "",
+      "🎯 Next session focus:",
+      "",
+      "* ",
+      "",
+      "🎮 Mini-game:",
+      "",
+      "* ",
+      "",
+      "🧠 Pattern:",
+      "",
+      "* ",
+    ].join("\n");
+  }, []);
+
+  const applyNotesTemplate = () => {
+    const existing = draft.notes.trim();
+    if (existing.length > 0) {
+      const shouldReplace = window.confirm("Replace your existing notes with the session template?");
+      if (!shouldReplace) {
+        setNotesOpen(true);
+        return;
+      }
+    }
+    update({ notes: sessionNotesTemplate });
+    setNotesOpen(true);
+  };
+
+  const deleteDraftVoiceNote = async () => {
+    const id = typeof draft.voiceNoteId === "string" ? draft.voiceNoteId : "";
+    if (!id) return;
+    const ok = window.confirm("Remove this voice note from the session?");
+    if (!ok) return;
+    await deleteVoiceNote(id).catch(() => {});
+    update({ voiceNoteId: null, voiceNoteTranscript: null, voiceNoteTranscriptRomanized: null });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (voiceToastTimeoutRef.current) window.clearTimeout(voiceToastTimeoutRef.current);
+    };
+  }, []);
+
+  const showVoiceToast = (message: string) => {
+    setVoiceToast({ message, at: Date.now() });
+    if (voiceToastTimeoutRef.current) window.clearTimeout(voiceToastTimeoutRef.current);
+    voiceToastTimeoutRef.current = window.setTimeout(() => setVoiceToast(null), 2000);
+  };
 
   const formatDuration = (minutes: number) => {
     const hours = Math.floor(minutes / 60);
@@ -4364,7 +4625,16 @@ function NewSessionScreen({
           </section>
 
           <section className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Notes</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Notes</p>
+              <button
+                type="button"
+                onClick={applyNotesTemplate}
+                className="text-xs font-semibold text-blue-400 transition hover:text-blue-300"
+              >
+                Use template
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => setNotesOpen(true)}
@@ -4375,6 +4645,34 @@ function NewSessionScreen({
               </p>
               <ChevronDownSmallIcon />
             </button>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Voice Note</p>
+            {draft.voiceNoteId ? (
+              <div className="space-y-3">
+                <VoiceNotePlayer
+                  voiceNoteId={draft.voiceNoteId}
+                  transcript={draft.voiceNoteTranscript}
+                  romanizedTranscript={draft.voiceNoteTranscriptRomanized}
+                  onDelete={deleteDraftVoiceNote}
+                />
+              </div>
+            ) : (
+              <VoiceNoteRecorder
+                language={transcriptLanguage}
+                onLanguageChange={onTranscriptLanguageChange}
+                onSaved={({ id, transcript }) => {
+                  const romanizedTranscript = transcript ? romanizeHindiTranscript(transcript) : null;
+                  update({
+                    voiceNoteId: id,
+                    voiceNoteTranscript: transcript ?? null,
+                    voiceNoteTranscriptRomanized: romanizedTranscript,
+                  });
+                  showVoiceToast(transcript && transcript.trim() ? "Voice note + transcript saved" : "Voice note saved");
+                }}
+              />
+            )}
           </section>
 
           <section className="space-y-3">
@@ -4493,7 +4791,7 @@ function NewSessionScreen({
       {notesOpen ? (
         <NotesModal
           value={draft.notes}
-          placeholder="Add notes about the technique, key details, or what you learned..."
+          placeholder="What worked? What went wrong? What will you focus on next time?"
           onClose={() => setNotesOpen(false)}
           onChange={(value) => update({ notes: value })}
           title="Notes"
@@ -4626,6 +4924,14 @@ function NewSessionScreen({
           </div>
         </div>
       ) : null}
+
+      {voiceToast ? (
+        <div className="fixed bottom-[92px] left-1/2 z-50 w-[min(92vw,520px)] -translate-x-1/2">
+          <div className="rounded-2xl border border-white/10 bg-zinc-950/95 px-5 py-3 text-sm font-semibold text-white shadow-[0_20px_80px_rgba(0,0,0,0.75)] backdrop-blur">
+            {voiceToast.message}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -4739,9 +5045,17 @@ function SelectTrainingSessionScreen({
 
                   <div className="mt-4 flex items-center justify-between gap-4 text-xs text-zinc-500">
                     <p>Satisfaction: {satisfaction}/5</p>
-                    <p>
-                      {submissionsCount} submission{submissionsCount === 1 ? "" : "s"}
-                    </p>
+                    <div className="flex items-center gap-3">
+                      {session.voiceNoteId ? (
+                        <span className="inline-flex items-center gap-2 font-semibold text-zinc-400">
+                          <MicIcon />
+                          Voice note
+                        </span>
+                      ) : null}
+                      <p>
+                        {submissionsCount} submission{submissionsCount === 1 ? "" : "s"}
+                      </p>
+                    </div>
                   </div>
                 </button>
               );
@@ -5282,6 +5596,9 @@ type Session = {
   techniqueIds: string[];
   durationMinutes: number;
   notes: string;
+  voiceNoteId?: string | null;
+  voiceNoteTranscript?: string | null;
+  voiceNoteTranscriptRomanized?: string | null;
   satisfaction: number;
   tagFriends: string;
   visibility: SessionVisibility;
@@ -5362,6 +5679,167 @@ const cryptoSafeId = () => {
 };
 
 const dedupeStrings = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+
+const devanagariIndependentVowels: Record<string, string> = {
+  "अ": "a",
+  "आ": "aa",
+  "इ": "i",
+  "ई": "ee",
+  "उ": "u",
+  "ऊ": "oo",
+  "ऋ": "ri",
+  "ॠ": "ree",
+  "ऌ": "li",
+  "ॡ": "lee",
+  "ए": "e",
+  "ऐ": "ai",
+  "ओ": "o",
+  "औ": "au",
+  "ऑ": "o",
+  "ऍ": "e",
+};
+
+const devanagariMatras: Record<string, string> = {
+  "ा": "aa",
+  "ि": "i",
+  "ी": "ee",
+  "ु": "u",
+  "ू": "oo",
+  "ृ": "ri",
+  "ॄ": "ree",
+  "ॢ": "li",
+  "ॣ": "lee",
+  "े": "e",
+  "ै": "ai",
+  "ो": "o",
+  "ौ": "au",
+  "ॅ": "e",
+  "ॉ": "o",
+};
+
+const devanagariConsonants: Record<string, string> = {
+  "क": "k",
+  "ख": "kh",
+  "ग": "g",
+  "घ": "gh",
+  "ङ": "ng",
+  "च": "ch",
+  "छ": "chh",
+  "ज": "j",
+  "झ": "jh",
+  "ञ": "ny",
+  "ट": "t",
+  "ठ": "th",
+  "ड": "d",
+  "ढ": "dh",
+  "ण": "n",
+  "त": "t",
+  "थ": "th",
+  "द": "d",
+  "ध": "dh",
+  "न": "n",
+  "प": "p",
+  "फ": "ph",
+  "ब": "b",
+  "भ": "bh",
+  "म": "m",
+  "य": "y",
+  "र": "r",
+  "ल": "l",
+  "व": "v",
+  "श": "sh",
+  "ष": "sh",
+  "स": "s",
+  "ह": "h",
+  "क़": "q",
+  "ख़": "kh",
+  "ग़": "gh",
+  "ज़": "z",
+  "ड़": "r",
+  "ढ़": "rh",
+  "फ़": "f",
+  "ळ": "l",
+};
+
+const devanagariSigns: Record<string, string> = {
+  "ं": "n",
+  "ँ": "n",
+  "ः": "h",
+  "ऽ": "'",
+  "ॐ": "om",
+};
+
+const devanagariDigits: Record<string, string> = {
+  "०": "0",
+  "१": "1",
+  "२": "2",
+  "३": "3",
+  "४": "4",
+  "५": "5",
+  "६": "6",
+  "७": "7",
+  "८": "8",
+  "९": "9",
+};
+
+const DEVANAGARI_VIRAMA = "्";
+
+const containsDevanagari = (text: string) => /[\u0900-\u097F]/.test(text);
+
+const romanizeHindiTranscript = (text: string) => {
+  if (!text.trim() || !containsDevanagari(text)) return null;
+
+  let result = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1] ?? "";
+
+    if (devanagariIndependentVowels[char]) {
+      result += devanagariIndependentVowels[char];
+      continue;
+    }
+
+    if (devanagariConsonants[char]) {
+      const base = devanagariConsonants[char];
+      if (devanagariMatras[next]) {
+        result += `${base}${devanagariMatras[next]}`;
+        index += 1;
+        continue;
+      }
+      if (next === DEVANAGARI_VIRAMA) {
+        result += base;
+        index += 1;
+        continue;
+      }
+      result += `${base}a`;
+      continue;
+    }
+
+    if (devanagariSigns[char]) {
+      result += devanagariSigns[char];
+      continue;
+    }
+
+    if (devanagariDigits[char]) {
+      result += devanagariDigits[char];
+      continue;
+    }
+
+    if (char === DEVANAGARI_VIRAMA) {
+      continue;
+    }
+
+    result += char;
+  }
+
+  const normalized = result
+    .replace(/\s+/g, " ")
+    .replace(/\bae/g, "e")
+    .replace(/a([.,!?;:)\]])/g, "$1")
+    .trim();
+
+  return normalized && normalized !== text.trim() ? normalized : null;
+};
 
 function parseTechniqueImport(text: string): Technique[] {
   const lines = text
@@ -6550,6 +7028,29 @@ function DurationIcon() {
   );
 }
 
+function MicIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M19 11a7 7 0 0 1-14 0"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M12 18v3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M8 21h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function ChevronRightIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
@@ -6677,6 +7178,471 @@ function NotesModal({
             {Math.min(value.length, limit)}/{limit}
           </p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function VoiceNoteRecorder({
+  language,
+  onLanguageChange,
+  onSaved,
+}: {
+  language?: string;
+  onLanguageChange: (language: string) => void;
+  onSaved: (payload: { id: string; transcript?: string | null }) => void;
+}) {
+  const supported =
+    typeof window !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia) &&
+    typeof (window as unknown as { MediaRecorder?: unknown }).MediaRecorder !== "undefined";
+
+  const [status, setStatus] = useState<"idle" | "recording" | "saving" | "error" | "unsupported">(() =>
+    supported ? "idle" : "unsupported",
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [seconds, setSeconds] = useState(0);
+  const [transcript, setTranscript] = useState<string>("");
+
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const startedAtRef = useRef<number | null>(null);
+  const recognitionRef = useRef<unknown>(null);
+  const transcriptFinalRef = useRef<string>("");
+  const transcriptInterimRef = useRef<string>("");
+
+  const recognitionSupported = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    const anyWindow = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+    return Boolean(anyWindow.SpeechRecognition || anyWindow.webkitSpeechRecognition);
+  }, []);
+
+  const recognitionLanguage = useMemo(() => {
+    const trimmed = language?.trim();
+    if (trimmed) return trimmed;
+    if (typeof navigator !== "undefined" && navigator.language.trim()) return navigator.language.trim();
+    return "en-US";
+  }, [language]);
+
+  const recognitionLanguageOptions = useMemo(() => {
+    const base = [
+      { value: "en-US", label: "English (US)" },
+      { value: "en-IN", label: "English (India)" },
+      { value: "hi-IN", label: "Hindi" },
+    ];
+    if (!base.some((option) => option.value === recognitionLanguage)) {
+      return [{ value: recognitionLanguage, label: `Device default (${recognitionLanguage})` }, ...base];
+    }
+    return base;
+  }, [recognitionLanguage]);
+
+  useEffect(() => {
+    if (status !== "recording") return;
+    const interval = window.setInterval(() => setSeconds((value) => value + 1), 1000);
+    return () => window.clearInterval(interval);
+  }, [status]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        recorderRef.current?.stop();
+      } catch {}
+      try {
+        (recognitionRef.current as { stop?: () => void } | null)?.stop?.();
+      } catch {}
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      recorderRef.current = null;
+      streamRef.current = null;
+      recognitionRef.current = null;
+    };
+  }, []);
+
+  const pickMimeType = () => {
+    if (typeof window === "undefined") return "";
+    const mr = (window as unknown as { MediaRecorder?: typeof MediaRecorder }).MediaRecorder;
+    const can = (mime: string) => Boolean(mr?.isTypeSupported?.(mime));
+    const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+    return candidates.find((mime) => can(mime)) ?? "";
+  };
+
+  const start = async () => {
+    if (!supported) return;
+    setError(null);
+    setSeconds(0);
+    setTranscript("");
+    transcriptFinalRef.current = "";
+    transcriptInterimRef.current = "";
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      startedAtRef.current = Date.now();
+
+      const mimeType = pickMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) chunksRef.current.push(event.data);
+      };
+
+      if (recognitionSupported) {
+        const anyWindow = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+        const RecognitionCtor = (anyWindow.SpeechRecognition || anyWindow.webkitSpeechRecognition) as
+          | (new () => {
+              continuous: boolean;
+              interimResults: boolean;
+              lang: string;
+              onresult: ((event: unknown) => void) | null;
+              onerror: ((event: unknown) => void) | null;
+              start: () => void;
+              stop: () => void;
+            })
+          | undefined;
+        if (RecognitionCtor) {
+          const recognition = new RecognitionCtor();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = recognitionLanguage;
+          recognition.onresult = (event: unknown) => {
+            const safeEvent = event as {
+              resultIndex: number;
+              results: Array<
+                Array<{ transcript?: string }> & { isFinal: boolean }
+              >;
+            };
+            let interim = "";
+            for (let i = safeEvent.resultIndex; i < safeEvent.results.length; i += 1) {
+              const result = safeEvent.results[i];
+              const text = result?.[0]?.transcript ?? "";
+              if (!text) continue;
+              if (result.isFinal) transcriptFinalRef.current += `${text.trim()} `;
+              else interim += text;
+            }
+            transcriptInterimRef.current = interim.trim();
+            const combined = `${transcriptFinalRef.current}${transcriptInterimRef.current ? `\n${transcriptInterimRef.current}` : ""}`.trim();
+            setTranscript(combined);
+          };
+          recognition.onerror = (event: unknown) => {
+            const errorValue = (event as { error?: string } | null)?.error ?? "";
+            if (errorValue === "not-allowed") {
+              setError("Microphone access was blocked. Allow microphone use and try again.");
+            } else if (errorValue === "audio-capture") {
+              setError("No microphone was found on this device.");
+            } else if (errorValue === "no-speech") {
+              setError("No speech was detected. Try recording again.");
+            } else if (errorValue) {
+              setError(`Speech recognition error: ${errorValue}`);
+            }
+          };
+          recognitionRef.current = recognition as unknown;
+          try {
+            recognition.start();
+          } catch {
+            recognitionRef.current = null;
+          }
+        }
+      }
+
+      recorder.start();
+      setStatus("recording");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Microphone permission denied.";
+      setError(message);
+      setStatus("error");
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      recorderRef.current = null;
+    }
+  };
+
+  const stop = async () => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    setStatus("saving");
+
+    const durationMs =
+      typeof startedAtRef.current === "number" ? Math.max(0, Date.now() - startedAtRef.current) : undefined;
+
+    try {
+      (recognitionRef.current as { stop?: () => void } | null)?.stop?.();
+    } catch {}
+
+    const blob: Blob = await new Promise((resolve) => {
+      recorder.onstop = () => {
+        const mime = recorder.mimeType || pickMimeType() || "audio/webm";
+        resolve(new Blob(chunksRef.current, { type: mime }));
+      };
+      try {
+        recorder.stop();
+      } catch {
+        resolve(new Blob(chunksRef.current, { type: "audio/webm" }));
+      }
+    });
+
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    recorderRef.current = null;
+    chunksRef.current = [];
+    startedAtRef.current = null;
+    recognitionRef.current = null;
+
+    try {
+      const id = `voice-${cryptoSafeId()}`;
+      await saveVoiceNote(id, blob, durationMs);
+      const finalTranscript = transcriptFinalRef.current.trim();
+      onSaved({ id, transcript: finalTranscript ? finalTranscript : null });
+      setStatus("idle");
+      setSeconds(0);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not save recording.";
+      setError(message);
+      setStatus("error");
+    }
+  };
+
+  const formatSeconds = (totalSeconds: number) => {
+    const safe = Math.max(0, Math.floor(totalSeconds));
+    const minutes = Math.floor(safe / 60);
+    const seconds = safe % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+
+  if (status === "unsupported") {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+        <p className="text-sm text-zinc-300">Voice notes aren&apos;t supported on this device/browser yet.</p>
+        <p className="mt-2 text-xs text-zinc-500">You can still use text notes and the template.</p>
+      </div>
+    );
+  }
+
+  return (
+      <div className="space-y-3 rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+      {recognitionSupported ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+          <label htmlFor="voice-note-language" className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">
+            Transcript Language
+          </label>
+          <select
+            id="voice-note-language"
+            value={recognitionLanguage}
+            disabled={status === "recording" || status === "saving"}
+            onChange={(event) => onLanguageChange(event.target.value)}
+            className="min-w-[170px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-zinc-200 outline-none transition disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {recognitionLanguageOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+
+      {status === "recording" ? (
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-white">Recording…</p>
+            <p className="mt-1 text-xs text-zinc-500">{formatSeconds(seconds)}</p>
+          </div>
+          <button
+            type="button"
+            onClick={stop}
+            className="inline-flex h-10 items-center justify-center rounded-full bg-red-600 px-5 text-xs font-semibold text-white transition hover:bg-red-500"
+          >
+            Stop
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-white">Add a quick voice note</p>
+            <p className="mt-1 text-xs text-zinc-500">Great for remembering what happened right after class.</p>
+          </div>
+          <button
+            type="button"
+            disabled={status === "saving"}
+            onClick={start}
+            className="inline-flex h-10 items-center justify-center rounded-full bg-blue-600 px-5 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Record
+          </button>
+        </div>
+      )}
+
+      {status === "recording" && recognitionSupported ? (
+        <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Live transcript (beta)</p>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-200">
+            {transcript.trim().length > 0 ? transcript : "Listening…"}
+          </p>
+        </div>
+      ) : null}
+
+      {status === "saving" ? <p className="text-xs text-zinc-500">Saving…</p> : null}
+      {status === "error" && error ? (
+        <p className="text-xs text-red-300">{error}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function VoiceNotePlayer({
+  voiceNoteId,
+  transcript,
+  romanizedTranscript,
+  onDelete,
+}: {
+  voiceNoteId: string;
+  transcript?: string | null;
+  romanizedTranscript?: string | null;
+  onDelete?: () => void | Promise<void>;
+}) {
+  const [status, setStatus] = useState<"loading" | "ready" | "missing" | "error">("loading");
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [blob, setBlob] = useState<Blob | null>(null);
+  const [mimeType, setMimeType] = useState<string | null>(null);
+  const [createdAt, setCreatedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let urlToRevoke: string | null = null;
+    (async () => {
+      try {
+        setStatus("loading");
+        setAudioUrl(null);
+        setBlob(null);
+        setMimeType(null);
+        setCreatedAt(null);
+        const record = await loadVoiceNote(voiceNoteId);
+        if (cancelled) return;
+        if (!record) {
+          setStatus("missing");
+          return;
+        }
+        const url = URL.createObjectURL(record.blob);
+        urlToRevoke = url;
+        setAudioUrl(url);
+        setBlob(record.blob);
+        setMimeType(record.mimeType);
+        setCreatedAt(record.createdAt);
+        setStatus("ready");
+      } catch {
+        if (!cancelled) setStatus("error");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (urlToRevoke) URL.revokeObjectURL(urlToRevoke);
+    };
+  }, [voiceNoteId]);
+
+  if (status === "missing") {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+        <p className="text-sm text-zinc-300">Voice note not found on this device.</p>
+        {transcript && transcript.trim().length > 0 ? (
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Transcript</p>
+            <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-200">{transcript}</p>
+          </div>
+        ) : null}
+        {romanizedTranscript && romanizedTranscript.trim().length > 0 ? (
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Romanized</p>
+            <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-200">{romanizedTranscript}</p>
+          </div>
+        ) : null}
+        {onDelete ? (
+          <button
+            type="button"
+            onClick={() => onDelete()}
+            className="mt-3 inline-flex h-9 items-center justify-center rounded-full border border-white/10 bg-white/5 px-4 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+          >
+            Remove from session
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (status !== "ready" || !audioUrl) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+        <p className="text-sm text-zinc-400">{status === "error" ? "Could not load voice note." : "Loading voice note…"}</p>
+      </div>
+    );
+  }
+
+  const extensionFromMime = (mime: string | null) => {
+    if (!mime) return "webm";
+    if (mime.includes("mp4") || mime.includes("m4a")) return "m4a";
+    if (mime.includes("ogg")) return "ogg";
+    if (mime.includes("wav")) return "wav";
+    return "webm";
+  };
+
+  const suggestedFilename = () => {
+    const stamp = (createdAt ? createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10)).replaceAll(":", "-");
+    return `bjj-pal-voice-note-${stamp}.${extensionFromMime(mimeType)}`;
+  };
+
+  const download = () => {
+    const link = document.createElement("a");
+    link.href = audioUrl;
+    link.download = suggestedFilename();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  const share = async () => {
+    if (!blob) return;
+    const file = new File([blob], suggestedFilename(), { type: mimeType || blob.type || "audio/webm" });
+    const canShare = typeof navigator !== "undefined" && "canShare" in navigator && (navigator as unknown as { canShare?: (data: unknown) => boolean }).canShare;
+    const shareFn = typeof navigator !== "undefined" && "share" in navigator ? (navigator as unknown as { share?: (data: unknown) => Promise<void> }).share : null;
+    if (shareFn && (!canShare || canShare({ files: [file] }))) {
+      await shareFn({ files: [file], title: "BJJ Pal voice note" });
+      return;
+    }
+    download();
+  };
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+      <audio controls src={audioUrl} className="w-full" />
+      {transcript && transcript.trim().length > 0 ? (
+        <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Transcript</p>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-200">{transcript}</p>
+        </div>
+      ) : null}
+      {romanizedTranscript && romanizedTranscript.trim().length > 0 ? (
+        <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Romanized</p>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-200">{romanizedTranscript}</p>
+        </div>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => share().catch(() => download())}
+          className="inline-flex h-9 items-center justify-center rounded-full bg-blue-600 px-4 text-xs font-semibold text-white transition hover:bg-blue-500"
+        >
+          Save to device
+        </button>
+        {onDelete ? (
+          <button
+            type="button"
+            onClick={() => onDelete()}
+            className="inline-flex h-9 items-center justify-center rounded-full border border-white/10 bg-white/5 px-4 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+          >
+            Delete
+          </button>
+        ) : null}
       </div>
     </div>
   );
