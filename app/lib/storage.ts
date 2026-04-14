@@ -12,6 +12,7 @@ const KEYS = {
   sessions: "bjjpal_sessions_v1",
   techniques: "bjjpal_techniques_v1",
   tourDone: "bjjpal_tour_done",
+  profile: "bjjpal_profile_v1",
   migrationFlag: "bjjpal_storage_migrated_to_localforage_v1",
 } as const;
 
@@ -107,19 +108,51 @@ export const saveTourDone = async (done: boolean) => {
   await store.setItem(KEYS.tourDone, done ? "1" : "0");
 };
 
+export type BjjPalProfileV1 = {
+  version: 1;
+  name: string;
+  belt?: string;
+  stripes?: number;
+  selectedChallenges?: string[];
+  onboardingDone: boolean;
+};
+
+export const loadProfile = async (): Promise<BjjPalProfileV1 | null> => {
+  const value = await store.getItem<unknown>(KEYS.profile);
+  if (!value || typeof value !== "object") return null;
+  const profile = value as Partial<BjjPalProfileV1>;
+  if (profile.version !== 1) return null;
+  if (typeof profile.name !== "string") return null;
+  if (typeof profile.onboardingDone !== "boolean") return null;
+  if (profile.belt != null && typeof profile.belt !== "string") return null;
+  if (profile.stripes != null && typeof profile.stripes !== "number") return null;
+  if (profile.selectedChallenges != null && !Array.isArray(profile.selectedChallenges)) return null;
+  if (Array.isArray(profile.selectedChallenges) && !profile.selectedChallenges.every((item) => typeof item === "string")) {
+    return null;
+  }
+
+  return profile as BjjPalProfileV1;
+};
+
+export const saveProfile = async (profile: BjjPalProfileV1) => {
+  await store.setItem(KEYS.profile, profile);
+};
+
 export type BjjPalBackupV1 = {
   version: 1;
   exportedAt: string;
   sessions: unknown[];
   techniques: unknown[];
   tourDone?: boolean;
+  profile?: BjjPalProfileV1;
 };
 
 export const createBackup = async (): Promise<BjjPalBackupV1> => {
-  const [sessions, techniques, tourDone] = await Promise.all([
+  const [sessions, techniques, tourDone, profile] = await Promise.all([
     loadSessions<unknown>(),
     loadTechniques<unknown>(),
     loadTourDone(),
+    loadProfile(),
   ]);
 
   return {
@@ -128,6 +161,7 @@ export const createBackup = async (): Promise<BjjPalBackupV1> => {
     sessions,
     techniques,
     tourDone,
+    profile: profile ?? undefined,
   };
 };
 
@@ -150,7 +184,9 @@ export const restoreBackup = async (raw: string) => {
   if (typeof data.tourDone === "boolean") {
     await saveTourDone(data.tourDone);
   }
+  if (data.profile) {
+    await saveProfile(data.profile);
+  }
 
   await store.setItem(KEYS.migrationFlag, "1");
 };
-

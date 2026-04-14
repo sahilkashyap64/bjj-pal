@@ -5,11 +5,13 @@ import {
   createBackup,
   loadSessions,
   loadTechniques,
+  loadProfile,
   loadTourDone,
   migrateLocalStorageToLocalForageIfNeeded,
   restoreBackup,
   saveSessions,
   saveTechniques,
+  saveProfile,
   saveTourDone,
 } from "./lib/storage";
 
@@ -30,12 +32,53 @@ const challenges = [
 ];
 
 export default function Home() {
+  const [booted, setBooted] = useState(false);
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [belt, setBelt] = useState<Belt>("White");
   const [stripes, setStripes] = useState(0);
   const [selectedChallenges, setSelectedChallenges] = useState<string[]>([]);
   const [screen, setScreen] = useState<"onboarding" | "ready" | "main">("onboarding");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const isBelt = (value: unknown): value is Belt => typeof value === "string" && belts.includes(value as Belt);
+
+    (async () => {
+      try {
+        await migrateLocalStorageToLocalForageIfNeeded();
+        const profile = await loadProfile();
+        if (cancelled || !profile) return;
+
+        setName(profile.name);
+        if (isBelt(profile.belt)) {
+          setBelt(profile.belt);
+          const allowed = stripeOptionsForBelt(profile.belt);
+          const nextStripes = typeof profile.stripes === "number" ? Math.max(0, Math.floor(profile.stripes)) : 0;
+          setStripes(allowed.includes(nextStripes) ? nextStripes : allowed[0]);
+        } else if (typeof profile.stripes === "number") {
+          const allowed = stripeOptionsForBelt("White");
+          const nextStripes = Math.max(0, Math.floor(profile.stripes));
+          setStripes(allowed.includes(nextStripes) ? nextStripes : allowed[0]);
+        }
+
+        if (Array.isArray(profile.selectedChallenges)) {
+          setSelectedChallenges(profile.selectedChallenges);
+        }
+
+        if (profile.onboardingDone) {
+          setScreen("main");
+        }
+      } finally {
+        if (!cancelled) setBooted(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const completedSteps = useMemo(() => {
     return [name.trim().length > 0, selectedChallenges.length > 0, stripeOptionsForBelt(belt).includes(stripes)];
@@ -72,6 +115,29 @@ export default function Home() {
     }
   };
 
+  const persistProfile = (onboardingDone: boolean) => {
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+    saveProfile({
+      version: 1,
+      name: trimmedName,
+      belt,
+      stripes,
+      selectedChallenges,
+      onboardingDone,
+    }).catch(() => {});
+  };
+
+  if (!booted) {
+    return (
+      <div className="min-h-screen bg-black text-white">
+        <div className="mx-auto flex min-h-screen w-full max-w-4xl items-center justify-center px-5 py-7 sm:px-8">
+          <p className="text-sm text-zinc-500">Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
   if (screen === "main") {
     return <MainScreen name={name} />;
   }
@@ -82,7 +148,10 @@ export default function Home() {
         name={name}
         belt={belt}
         stripes={stripes}
-        onContinue={() => setScreen("main")}
+        onContinue={() => {
+          persistProfile(true);
+          setScreen("main");
+        }}
       />
     );
   }
@@ -3202,7 +3271,9 @@ function NewSessionScreen({
               onClick={() => setTagPartnersOpen(true)}
               className="flex w-full items-center justify-between border-b border-white/10 py-3 text-left transition hover:text-white"
             >
-              <p className="text-sm text-zinc-500">Tag training partners...</p>
+              <p className={`text-sm ${draft.tagFriends.trim() ? "text-zinc-200" : "text-zinc-500"}`}>
+                {draft.tagFriends.trim() || "Tag training partners..."}
+              </p>
               <ChevronDownSmallIcon />
             </button>
           </section>
@@ -3274,8 +3345,9 @@ function NewSessionScreen({
 
       {tagPartnersOpen ? (
         <TagPartnersModal
-          selectedCount={0}
+          value={draft.tagFriends}
           limit={5}
+          onChange={(value) => update({ tagFriends: value })}
           onClose={() => setTagPartnersOpen(false)}
         />
       ) : null}
@@ -5198,43 +5270,124 @@ function NotesModal({
 }
 
 function TagPartnersModal({
-  selectedCount,
+  value,
   limit,
+  onChange,
   onClose,
 }: {
-  selectedCount: number;
+  value: string;
   limit: number;
+  onChange: (next: string) => void;
   onClose: () => void;
 }) {
+  const normalize = (input: string) => {
+    const parts = input
+      .split(/[,\n;]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const deduped: string[] = [];
+    for (const part of parts) {
+      const key = part.toLowerCase();
+      if (deduped.some((existing) => existing.toLowerCase() === key)) continue;
+      deduped.push(part);
+    }
+    return deduped.slice(0, Math.max(0, limit));
+  };
+
+  const [query, setQuery] = useState("");
+  const [partners, setPartners] = useState<string[]>(() => normalize(value));
+
+  const addPartner = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const next = normalize([...partners, trimmed].join(", "));
+    setPartners(next);
+    setQuery("");
+  };
+
+  const removePartner = (name: string) => {
+    const next = partners.filter((partner) => partner !== name);
+    setPartners(next);
+  };
+
+  const canAddMore = partners.length < limit;
+
+  const save = () => {
+    onChange(partners.join(", "));
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-50">
       <button
         type="button"
         aria-label="Close tag partners"
         className="absolute inset-0 bg-black/65"
-        onClick={onClose}
+        onClick={save}
       />
       <div className="absolute left-1/2 top-[220px] w-[min(92vw,520px)] -translate-x-1/2 overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-[0_30px_90px_rgba(0,0,0,0.85)]">
         <header className="flex items-center justify-between px-6 py-5">
           <p className="text-lg font-semibold text-white">Tag training partners</p>
           <p className="text-sm text-zinc-500">
-            {selectedCount}/{limit}
+            {partners.length}/{limit}
           </p>
         </header>
         <div className="px-6 pb-6">
           <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
             <SearchIcon />
             <input
-              placeholder="Search people you follow"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (!canAddMore) return;
+                  addPartner(query);
+                }
+              }}
+              placeholder={canAddMore ? "Type a name and press Enter" : "Partner limit reached"}
               className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
             />
+            <button
+              type="button"
+              aria-label="Add partner"
+              disabled={!canAddMore || query.trim().length === 0}
+              onClick={() => addPartner(query)}
+              className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <PlusSmallIcon />
+            </button>
           </div>
-          <p className="mt-8 text-center text-sm text-zinc-500">You&apos;re not following anyone yet.</p>
+
+          {partners.length > 0 ? (
+            <div className="mt-5 flex flex-wrap gap-2">
+              {partners.map((partner) => (
+                <span
+                  key={partner}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/25 px-3 py-1 text-xs font-semibold text-zinc-200"
+                >
+                  {partner}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${partner}`}
+                    onClick={() => removePartner(partner)}
+                    className="grid h-5 w-5 place-items-center rounded-full bg-white/10 text-zinc-200 transition hover:bg-white/20"
+                  >
+                    <XIcon />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-8 text-center text-sm text-zinc-500">
+              Add partners manually for now.
+            </p>
+          )}
         </div>
         <footer className="border-t border-white/10 bg-black/50 px-6 py-5">
           <button
             type="button"
-            onClick={onClose}
+            onClick={save}
             className="h-12 w-full rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
           >
             Done
