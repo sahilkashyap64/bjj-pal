@@ -554,6 +554,44 @@ function MainScreen({ name }: { name: string }) {
   const [sessionFilterDraft, setSessionFilterDraft] = useState<SessionFilters>(sessionFilters);
   const [sessionSort, setSessionSort] = useState<"New" | "Old" | "A-Z">("New");
   const [isSessionSortOpen, setIsSessionSortOpen] = useState(false);
+  const [sessionScreen, setSessionScreen] = useState<"home" | "new" | "detail" | "edit">("home");
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessionDraft, setSessionDraft] = useState<SessionDraft | null>(null);
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    try {
+      if (typeof window === "undefined") return [];
+      const raw = window.localStorage.getItem("flowroll_sessions_v1");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as Session[];
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((session) => {
+        const legacySubmissions = (session as { submissions?: unknown }).submissions;
+        const legacyText = typeof legacySubmissions === "string" ? legacySubmissions : "";
+        const legacyEntries = legacyText
+          .split(/[,\n;]/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .map((name) => ({ name, count: 1 }));
+
+        const entriesRaw = (session as { submissionEntries?: unknown }).submissionEntries;
+        const submissionEntries = Array.isArray(entriesRaw)
+          ? entriesRaw
+              .map((entry) => {
+                const name = (entry as { name?: unknown }).name;
+                const count = (entry as { count?: unknown }).count;
+                if (typeof name !== "string" || !name.trim()) return null;
+                const safeCount = typeof count === "number" && Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
+                return { name: name.trim(), count: safeCount };
+              })
+              .filter((entry): entry is SessionSubmissionEntry => Boolean(entry))
+          : legacyEntries;
+
+        return { ...session, submissionEntries } as Session;
+      });
+    } catch {
+      return [];
+    }
+  });
 
   const [techniques, setTechniques] = useState<Technique[]>(() => {
     try {
@@ -649,6 +687,14 @@ function MainScreen({ name }: { name: string }) {
       // ignore
     }
   }, [techniques]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("flowroll_sessions_v1", JSON.stringify(sessions));
+    } catch {
+      // ignore
+    }
+  }, [sessions]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -901,7 +947,119 @@ function MainScreen({ name }: { name: string }) {
     return { left, top, width, arrowLeft, placeBelow };
   }, [anchorRect]);
 
+  const startNewSession = () => {
+    const now = new Date();
+    setSessionDraft({
+      id: `session-${cryptoSafeId()}`,
+      date: now.toISOString().slice(0, 10),
+      time: now.toTimeString().slice(0, 5),
+      location: "",
+      type: "",
+      submissionEntries: [],
+      durationMinutes: 90,
+      notes: "",
+      satisfaction: 0,
+      tagFriends: "",
+      visibility: "Everyone",
+      caption: "",
+    });
+    setActiveSessionId(null);
+    setSessionScreen("new");
+  };
+
+  const saveSessionDraft = () => {
+    if (!sessionDraft) return;
+    const next: Session = {
+      id: sessionDraft.id,
+      date: sessionDraft.date,
+      time: sessionDraft.time,
+      location: sessionDraft.location.trim(),
+      type: sessionDraft.type,
+      submissionEntries: sessionDraft.submissionEntries,
+      durationMinutes: sessionDraft.durationMinutes,
+      notes: sessionDraft.notes.trim(),
+      satisfaction: sessionDraft.satisfaction,
+      tagFriends: sessionDraft.tagFriends.trim(),
+      visibility: sessionDraft.visibility,
+      caption: sessionDraft.caption.trim(),
+    };
+    setSessions((current) => {
+      const exists = current.some((session) => session.id === next.id);
+      if (!exists) return [next, ...current];
+      return current.map((session) => (session.id === next.id ? next : session));
+    });
+    setSessionDraft(null);
+    setSessionScreen("home");
+  };
+
+  const deleteSession = (sessionId: string) => {
+    setSessions((current) => current.filter((session) => session.id !== sessionId));
+    setSessionDraft(null);
+    setActiveSessionId(null);
+    setSessionScreen("home");
+  };
+
+  const startSessionDetail = (sessionId: string) => {
+    const existing = sessions.find((session) => session.id === sessionId);
+    if (!existing) return;
+    setActiveSessionId(sessionId);
+    setSessionDraft(null);
+    setSessionScreen("detail");
+  };
+
   if (bottomTab === "sessions" && screen === "list") {
+    if (sessionScreen === "new" && sessionDraft) {
+      return (
+        <NewSessionScreen
+          draft={sessionDraft}
+          onDraftChange={setSessionDraft}
+          onCancel={() => {
+            setSessionDraft(null);
+            setSessionScreen("home");
+          }}
+          onSave={saveSessionDraft}
+          onAddTechnique={() => {}}
+          mode="new"
+        />
+      );
+    }
+
+    if (sessionScreen === "edit" && sessionDraft && activeSessionId) {
+      return (
+        <NewSessionScreen
+          draft={sessionDraft}
+          onDraftChange={setSessionDraft}
+          onCancel={() => {
+            setSessionDraft(null);
+            setActiveSessionId(null);
+            setSessionScreen("home");
+          }}
+          onSave={saveSessionDraft}
+          onAddTechnique={() => {}}
+          mode="edit"
+          onDelete={() => deleteSession(activeSessionId)}
+        />
+      );
+    }
+
+    if (sessionScreen === "detail" && activeSessionId) {
+      const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
+      return (
+        <SessionDetailScreen
+          session={activeSession}
+          onBack={() => {
+            setActiveSessionId(null);
+            setSessionScreen("home");
+          }}
+          onEdit={() => {
+            if (!activeSession) return;
+            setSessionDraft(activeSession);
+            setSessionScreen("edit");
+          }}
+        />
+      );
+    }
+
     return (
       <SessionsHomeScreen
         name={name}
@@ -939,7 +1097,9 @@ function MainScreen({ name }: { name: string }) {
           setIsSessionSortOpen(false);
         }}
         onCloseSort={() => setIsSessionSortOpen(false)}
-        onAddSession={() => {}}
+        onAddSession={startNewSession}
+        sessions={sessions}
+        onOpenSession={startSessionDetail}
         bottomTab={bottomTab}
         onBottomTabChange={(next) => {
           switchBottomTab(next);
@@ -1929,6 +2089,8 @@ function SessionsHomeScreen({
   onPickSort,
   onCloseSort,
   onAddSession,
+  sessions,
+  onOpenSession,
   bottomTab,
   onBottomTabChange,
 }: {
@@ -1949,10 +2111,64 @@ function SessionsHomeScreen({
   onPickSort: (value: "New" | "Old" | "A-Z") => void;
   onCloseSort: () => void;
   onAddSession: () => void;
+  sessions: Session[];
+  onOpenSession: (sessionId: string) => void;
   bottomTab: "sessions" | "techniques" | "you";
   onBottomTabChange: (next: "sessions" | "techniques" | "you") => void;
 }) {
-  const sessionsFound = 0;
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
+
+  const filteredSessions = useMemo(() => {
+    let list = [...sessions];
+
+    const search = filters.search.trim().toLowerCase();
+    if (search) {
+      list = list.filter((session) => {
+        const haystack = `${session.location} ${session.type} ${session.notes} ${session.caption}`.toLowerCase();
+        return haystack.includes(search);
+      });
+    }
+
+    if (filters.sessionTypes.length > 0) {
+      list = list.filter((session) => (session.type ? filters.sessionTypes.includes(session.type) : false));
+    }
+
+    if (filters.minSatisfaction > 0) {
+      list = list.filter((session) => session.satisfaction >= filters.minSatisfaction);
+    }
+
+    if (filters.startDate) {
+      list = list.filter((session) => session.date >= filters.startDate);
+    }
+
+    if (filters.endDate) {
+      list = list.filter((session) => session.date <= filters.endDate);
+    }
+
+    if (filters.location.trim()) {
+      const locationQuery = filters.location.trim().toLowerCase();
+      list = list.filter((session) => session.location.toLowerCase().includes(locationQuery));
+    }
+
+    if (filters.submission.trim()) {
+      const submissionQuery = filters.submission.trim().toLowerCase();
+      list = list.filter((session) =>
+        session.submissionEntries.some((entry) => entry.name.toLowerCase().includes(submissionQuery)),
+      );
+    }
+
+    if (sort === "Old") {
+      list.sort((a, b) => `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`));
+    } else if (sort === "A-Z") {
+      list.sort((a, b) => (a.location || "").localeCompare(b.location || ""));
+    } else {
+      list.sort((a, b) => `${b.date}T${b.time}`.localeCompare(`${a.date}T${a.time}`));
+    }
+
+    return list;
+  }, [filters, sessions, sort]);
+
+  const sessionsFound = filteredSessions.length;
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -2082,12 +2298,99 @@ function SessionsHomeScreen({
 
             <p className="mt-4 text-xs text-zinc-500">{sessionsFound} sessions found</p>
 
-            <div className="mt-14 text-center">
-              <p className="text-2xl font-semibold text-white">No Training Sessions Yet</p>
-              <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-zinc-400">
-                Use the + button to create your first training session and start tracking your BJJ progress
-              </p>
-            </div>
+            {sessionsFound === 0 ? (
+              <div className="mt-14 text-center">
+                <p className="text-2xl font-semibold text-white">No Training Sessions Yet</p>
+                <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-zinc-400">
+                  Use the + button to create your first training session and start tracking your BJJ progress
+                </p>
+              </div>
+            ) : (
+              <div className="mt-5 space-y-3">
+                {filteredSessions.map((session) => {
+                  const expanded = session.id === expandedSessionId;
+                  const submissionsCount = session.submissionEntries.reduce((sum, entry) => sum + entry.count, 0);
+                  const durationLabel = formatCompactDuration(session.durationMinutes);
+
+                  return (
+                    <div
+                      key={session.id}
+                      className="overflow-hidden rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-left shadow-[0_18px_60px_rgba(0,0,0,0.35)]"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedSessionId((current) => (current === session.id ? null : session.id))}
+                          className="min-w-0 flex-1 text-left"
+                          aria-label={expanded ? "Collapse session" : "Expand session"}
+                        >
+                          <p className="text-base font-semibold text-white">
+                            {formatSessionCardDate(session.date)}
+                          </p>
+                          <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+                            <span className="inline-flex items-center gap-1">
+                              <ClockIcon />
+                              {formatShortTime(session.time)}
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <DurationIcon />
+                              {durationLabel}
+                            </span>
+                            {session.location ? (
+                              <span className="inline-flex items-center gap-1">
+                                <LocationMiniIcon />
+                                {session.location}
+                              </span>
+                            ) : null}
+                          </div>
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            aria-label="Open session details"
+                            onClick={() => onOpenSession(session.id)}
+                            className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-200 transition hover:bg-white/10"
+                          >
+                            <ChevronRightIcon />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={expanded ? "Collapse" : "Expand"}
+                            onClick={() => setExpandedSessionId((current) => (current === session.id ? null : session.id))}
+                            className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-200 transition hover:bg-white/10"
+                          >
+                            {expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {session.type ? (
+                          <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${sessionTypePillClass(session.type)}`}>
+                            {session.type}
+                          </span>
+                        ) : null}
+                        <span className="rounded-full bg-black/30 px-3 py-1 text-[11px] font-semibold text-zinc-300">
+                          {submissionsCount} {submissionsCount === 1 ? "Submission" : "Submissions"}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 flex items-center gap-2">
+                        <span className="text-xs font-semibold text-zinc-500">Satisfaction:</span>
+                        <SessionStarRow value={session.satisfaction} />
+                      </div>
+
+                      {expanded ? (
+                        <div className="mt-3">
+                          <p className="text-sm text-zinc-300">{session.notes || "No notes added yet"}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </main>
         )}
 
@@ -2295,6 +2598,560 @@ function SessionFilterScreen({
           </div>
         </footer>
       </div>
+    </div>
+  );
+}
+
+function SessionDetailScreen({
+  session,
+  onBack,
+  onEdit,
+}: {
+  session: Session | null;
+  onBack: () => void;
+  onEdit: () => void;
+}) {
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-black text-white">
+        <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
+          <header className="flex items-center justify-between">
+            <button
+              type="button"
+              aria-label="Back"
+              onClick={onBack}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <BackIcon />
+            </button>
+            <p className="text-lg font-semibold text-white">Session Details</p>
+            <div className="w-10" />
+          </header>
+          <main className="mt-10 flex-1 text-center text-zinc-400">
+            Session not found.
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  const submissions = session.submissionEntries.flatMap((entry) =>
+    Array.from({ length: entry.count }).map(() => entry.name),
+  );
+
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={onBack}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <BackIcon />
+          </button>
+          <p className="text-lg font-semibold text-white">Session Details</p>
+          <button
+            type="button"
+            aria-label="Edit session"
+            onClick={onEdit}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <PencilIcon />
+          </button>
+        </header>
+
+        <main className="mt-8 flex-1 space-y-7">
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Date</p>
+            <p className="text-sm text-zinc-200">
+              {new Intl.DateTimeFormat(undefined, {
+                weekday: "long",
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              }).format(new Date(`${session.date}T00:00:00`))}{" "}
+              · {formatShortTime(session.time)}
+            </p>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Location</p>
+            <p className="text-sm text-zinc-200">{session.location || "—"}</p>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Duration</p>
+            <p className="text-sm text-zinc-200">{formatCompactDuration(session.durationMinutes)}</p>
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Type</p>
+            {session.type ? (
+              <span className={`inline-flex rounded-full px-4 py-2 text-xs font-semibold ${sessionTypePillClass(session.type)}`}>
+                {session.type}
+              </span>
+            ) : (
+              <p className="text-sm text-zinc-500">—</p>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">
+              Submissions ({submissions.length})
+            </p>
+            {submissions.length === 0 ? (
+              <p className="text-sm text-zinc-500">No submissions</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {session.submissionEntries.map((entry) => (
+                  <span
+                    key={entry.name}
+                    className="inline-flex rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white"
+                  >
+                    {entry.name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Notes</p>
+            <p className={`text-sm ${session.notes ? "text-zinc-200" : "text-zinc-500 italic"}`}>
+              {session.notes || "No notes added yet"}
+            </p>
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Satisfaction Rating</p>
+            <div className="flex items-center gap-3">
+              <SessionStarRow value={session.satisfaction} />
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Visibility</p>
+            <p className="text-sm text-zinc-200">{session.visibility}</p>
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 text-sm font-semibold text-blue-400 transition hover:text-blue-300"
+            >
+              <ExternalLinkIcon />
+              View Public Post
+            </button>
+          </section>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function NewSessionScreen({
+  draft,
+  onDraftChange,
+  onCancel,
+  onSave,
+  onAddTechnique,
+  mode,
+  onDelete,
+}: {
+  draft: SessionDraft;
+  onDraftChange: (next: SessionDraft | null) => void;
+  onCancel: () => void;
+  onSave: () => void;
+  onAddTechnique: () => void;
+  mode: "new" | "edit";
+  onDelete?: () => void;
+}) {
+  const update = (patch: Partial<SessionDraft>) => onDraftChange({ ...draft, ...patch });
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [tagPartnersOpen, setTagPartnersOpen] = useState(false);
+  const [visibilityOpen, setVisibilityOpen] = useState(false);
+  const [captionOpen, setCaptionOpen] = useState(false);
+  const [submissionQuery, setSubmissionQuery] = useState("");
+
+  const formatDuration = (minutes: number) => {
+    const hours = Math.floor(minutes / 60);
+    const remaining = minutes % 60;
+    if (hours === 0) return `${remaining} min`;
+    if (remaining === 0) return `${hours} hr`;
+    return `${hours} hr ${remaining} min`;
+  };
+
+  const typeStyle = (type: SessionType) => {
+    if (type === "Gi") return "bg-blue-600/20 text-blue-200 ring-1 ring-blue-500/30";
+    if (type === "No-Gi") return "bg-red-600/20 text-red-200 ring-1 ring-red-500/30";
+    if (type === "Open Mat") return "bg-emerald-600/20 text-emerald-200 ring-1 ring-emerald-500/30";
+    if (type === "Wrestling") return "bg-violet-600/20 text-violet-200 ring-1 ring-violet-500/30";
+    if (type === "Competition") return "bg-amber-600/20 text-amber-200 ring-1 ring-amber-500/30";
+    return "bg-white/10 text-zinc-200 ring-1 ring-white/15";
+  };
+
+  const typeInactiveStyle = "bg-white/5 text-zinc-500 ring-1 ring-white/10 hover:bg-white/10 hover:text-zinc-200";
+
+  const filteredSubmissions = useMemo(() => {
+    const query = submissionQuery.trim().toLowerCase();
+    if (!query) return [];
+    const alreadySelected = new Set(draft.submissionEntries.map((entry) => entry.name.toLowerCase()));
+    return submissionLibrary
+      .filter((name) => name.toLowerCase().includes(query))
+      .filter((name) => !alreadySelected.has(name.toLowerCase()))
+      .slice(0, 8);
+  }, [draft.submissionEntries, submissionQuery]);
+
+  const addSubmission = (name: string) => {
+    update({
+      submissionEntries: [...draft.submissionEntries, { name, count: 1 }],
+    });
+    setSubmissionQuery("");
+  };
+
+  const updateSubmissionCount = (name: string, delta: number) => {
+    update({
+      submissionEntries: draft.submissionEntries
+        .map((entry) => (entry.name === name ? { ...entry, count: entry.count + delta } : entry))
+        .filter((entry) => entry.count > 0),
+    });
+  };
+
+  const removeSubmission = (name: string) => {
+    update({
+      submissionEntries: draft.submissionEntries.filter((entry) => entry.name !== name),
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-28 pt-6 sm:px-8">
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label="Back"
+              onClick={onCancel}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <BackIcon />
+            </button>
+            <p className="text-lg font-semibold text-white">{mode === "edit" ? "Edit Session" : "New Session"}</p>
+          </div>
+          {mode === "edit" && onDelete ? (
+            <button
+              type="button"
+              aria-label="Delete session"
+              onClick={onDelete}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
+              <TrashIcon />
+            </button>
+          ) : (
+            <div className="w-10" />
+          )}
+        </header>
+
+        <main className="mt-6 flex-1 space-y-7">
+          <section className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Date</p>
+              <input
+                type="date"
+                value={draft.date}
+                onChange={(event) => update({ date: event.target.value })}
+                className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Time</p>
+              <input
+                type="time"
+                value={draft.time}
+                onChange={(event) => update({ time: event.target.value })}
+                className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none"
+              />
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Location</p>
+            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+              <LocationPinIcon />
+              <input
+                value={draft.location}
+                onChange={(event) => update({ location: event.target.value })}
+                placeholder="Gym name..."
+                className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+              />
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Type</p>
+            <div className="flex flex-wrap gap-3">
+              {(["Gi", "No-Gi", "Open Mat", "Wrestling", "Competition", "Other"] as const).map((type) => {
+                const active = draft.type === type;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => update({ type: active ? "" : type })}
+                    className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                      active ? typeStyle(type) : typeInactiveStyle
+                    }`}
+                  >
+                    {type}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Submissions</p>
+            <div className="relative">
+              <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <SearchIcon />
+                <input
+                  value={submissionQuery}
+                  onChange={(event) => setSubmissionQuery(event.target.value)}
+                  placeholder="Search submissions..."
+                  className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                />
+                {submissionQuery.trim().length > 0 ? (
+                  <button
+                    type="button"
+                    aria-label="Clear submission search"
+                    onClick={() => setSubmissionQuery("")}
+                    className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-black/20 text-zinc-200 transition hover:bg-white/10"
+                  >
+                    <XIcon />
+                  </button>
+                ) : null}
+              </div>
+
+              {filteredSubmissions.length > 0 ? (
+                <div className="absolute left-0 right-0 top-14 z-20 overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 shadow-[0_18px_60px_rgba(0,0,0,0.8)]">
+                  {filteredSubmissions.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => addSubmission(name)}
+                      className="w-full px-5 py-4 text-left text-sm font-semibold text-zinc-100 transition hover:bg-white/5"
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
+            {draft.submissionEntries.length > 0 ? (
+              <div className="space-y-3 pt-2">
+                {draft.submissionEntries.map((entry) => (
+                  <div key={entry.name} className="flex items-center gap-3">
+                    <div className="flex flex-1 items-center justify-between rounded-xl bg-red-500 px-3 py-2 text-white shadow-[0_10px_30px_rgba(239,68,68,0.25)]">
+                      <button
+                        type="button"
+                        aria-label={`Decrease ${entry.name}`}
+                        onClick={() => updateSubmissionCount(entry.name, -1)}
+                        className="grid h-8 w-8 place-items-center rounded-full bg-black/15 transition hover:bg-black/25"
+                      >
+                        <MinusIcon />
+                      </button>
+
+                      <p className="text-xs font-semibold">
+                        {entry.count} {entry.name}
+                      </p>
+
+                      <button
+                        type="button"
+                        aria-label={`Increase ${entry.name}`}
+                        onClick={() => updateSubmissionCount(entry.name, 1)}
+                        className="grid h-8 w-8 place-items-center rounded-full bg-black/15 transition hover:bg-black/25"
+                      >
+                        <PlusSmallIcon />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${entry.name}`}
+                      onClick={() => removeSubmission(entry.name)}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Duration</p>
+            <select
+              value={draft.durationMinutes}
+              onChange={(event) => update({ durationMinutes: Number(event.target.value) })}
+              className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none"
+            >
+              {[30, 60, 90, 120, 150, 180].map((minutes) => (
+                <option key={minutes} value={minutes}>
+                  {formatDuration(minutes)}
+                </option>
+              ))}
+            </select>
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Photo</p>
+            <div className="flex items-start gap-4">
+              <div className="grid h-20 w-20 place-items-center rounded-2xl border border-dashed border-white/15 bg-white/5 text-zinc-300">
+                <MediaIcon />
+              </div>
+              <div className="pt-2">
+                <p className="text-sm text-zinc-500">Share a photo on FlowRoll</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Notes</p>
+            <button
+              type="button"
+              onClick={() => setNotesOpen(true)}
+              className="flex w-full items-center justify-between border-b border-white/10 py-3 text-left transition hover:text-white"
+            >
+              <p className={`text-sm ${draft.notes.trim() ? "text-zinc-200" : "text-zinc-500"}`}>
+                {draft.notes.trim() || "How did the session go? What did you work on?"}
+              </p>
+              <ChevronDownSmallIcon />
+            </button>
+          </section>
+
+          <section className="space-y-3">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Satisfaction</p>
+            <div className="flex items-center gap-3">
+              {Array.from({ length: 5 }).map((_, index) => {
+                const value = index + 1;
+                const active = value <= draft.satisfaction;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-label={`Set satisfaction ${value}`}
+                    onClick={() => update({ satisfaction: active && value === draft.satisfaction ? 0 : value })}
+                    className={`transition ${active ? "text-amber-400" : "text-zinc-600 hover:text-zinc-400"}`}
+                  >
+                    <StarOutlineIcon filled={active} />
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Tag Friends</p>
+            <button
+              type="button"
+              onClick={() => setTagPartnersOpen(true)}
+              className="flex w-full items-center justify-between border-b border-white/10 py-3 text-left transition hover:text-white"
+            >
+              <p className="text-sm text-zinc-500">Tag training partners...</p>
+              <ChevronDownSmallIcon />
+            </button>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Visibility</p>
+            <button
+              type="button"
+              onClick={() => setVisibilityOpen(true)}
+              className="flex w-full items-center justify-between border-b border-white/10 py-3 text-left transition hover:text-white"
+            >
+              <p className="text-sm text-zinc-200">{draft.visibility}</p>
+              <ChevronDownSmallIcon />
+            </button>
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Caption</p>
+            <button
+              type="button"
+              onClick={() => setCaptionOpen(true)}
+              className="flex w-full items-center justify-between border-b border-white/10 py-3 text-left transition hover:text-white"
+            >
+              <p className="text-sm text-zinc-500">Add a caption for your public post...</p>
+              <ChevronDownSmallIcon />
+            </button>
+          </section>
+
+          <button
+            type="button"
+            onClick={onAddTechnique}
+            className="mt-2 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-white text-sm font-semibold text-black transition hover:bg-zinc-200"
+          >
+            <LightningIcon />
+            Add Technique
+          </button>
+        </main>
+
+        <footer className="fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/92 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-4 sm:px-8">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="h-12 flex-1 rounded-xl bg-white/10 text-sm font-semibold text-zinc-200 transition hover:bg-white/15"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              className="h-12 flex-1 rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
+            >
+              Save
+            </button>
+          </div>
+        </footer>
+      </div>
+
+      {notesOpen ? (
+        <NotesModal
+          value={draft.notes}
+          placeholder="Add notes about the technique, key details, or what you learned..."
+          onClose={() => setNotesOpen(false)}
+          onChange={(value) => update({ notes: value })}
+          title="Notes"
+          max={2000}
+        />
+      ) : null}
+
+      {tagPartnersOpen ? (
+        <TagPartnersModal
+          selectedCount={0}
+          limit={5}
+          onClose={() => setTagPartnersOpen(false)}
+        />
+      ) : null}
+
+      {visibilityOpen ? (
+        <VisibilitySheet
+          value={draft.visibility}
+          onChange={(value) => update({ visibility: value })}
+          onDone={() => setVisibilityOpen(false)}
+        />
+      ) : null}
+
+      {captionOpen ? (
+        <NotesModal
+          value={draft.caption}
+          placeholder="Add a caption for your public post..."
+          onClose={() => setCaptionOpen(false)}
+          onChange={(value) => update({ caption: value.slice(0, 500) })}
+          title="Caption"
+          max={500}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2811,6 +3668,30 @@ type SessionFilters = {
   minSatisfaction: number;
 };
 
+type SessionVisibility = "Everyone" | "Friends" | "Private";
+
+type SessionSubmissionEntry = {
+  name: string;
+  count: number;
+};
+
+type Session = {
+  id: string;
+  date: string;
+  time: string;
+  location: string;
+  type: SessionType | "";
+  submissionEntries: SessionSubmissionEntry[];
+  durationMinutes: number;
+  notes: string;
+  satisfaction: number;
+  tagFriends: string;
+  visibility: SessionVisibility;
+  caption: string;
+};
+
+type SessionDraft = Session;
+
 const createDefaultTechnique = (): Technique => ({
   id: "triangle-choke",
   title: "Triangle Choke",
@@ -2851,6 +3732,28 @@ const IMPORT_PROMPT_TEXT = `Using this exact format where every technique starts
 Convert the following BJJ notes to this format. Each line should be: • [Technique Name] - [Notes/Description]
 
 Paste your notes here:`;
+
+const submissionLibrary = [
+  "Anaconda Choke",
+  "Arm Triangle",
+  "Bow and Arrow Choke",
+  "Armbar",
+  "Americana",
+  "Baseball Choke",
+  "Buggy Choke",
+  "Choi Bar",
+  "Darce Choke",
+  "Ezekiel Choke",
+  "Guillotine",
+  "Heel Hook",
+  "Kimura",
+  "Kneebar",
+  "Omoplata",
+  "Rear Naked Choke",
+  "Straight Ankle Lock",
+  "Triangle Choke",
+  "Wrist Lock",
+] as const;
 
 const cryptoSafeId = () => {
   try {
@@ -2915,7 +3818,7 @@ const formatDateTimeLabel = (iso: string) => {
   }).format(date);
 };
 
-const formatLongDateTimeLabel = (iso: string) => {
+  const formatLongDateTimeLabel = (iso: string) => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return new Intl.DateTimeFormat(undefined, {
@@ -2926,6 +3829,39 @@ const formatLongDateTimeLabel = (iso: string) => {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+};
+
+const formatShortTime = (time: string) => {
+  const date = new Date(`1970-01-01T${time}:00`);
+  if (Number.isNaN(date.getTime())) return time;
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+};
+
+const formatSessionCardDate = (isoDate: string) => {
+  const date = new Date(`${isoDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return isoDate;
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+};
+
+const formatCompactDuration = (minutes: number) => {
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  if (hours <= 0) return `${remaining}m`;
+  if (remaining <= 0) return `${hours}h`;
+  return `${hours}h ${remaining}m`;
+};
+
+const sessionTypePillClass = (type: SessionType) => {
+  if (type === "Gi") return "bg-blue-600/20 text-blue-200 ring-1 ring-blue-500/30";
+  if (type === "No-Gi") return "bg-red-600/20 text-red-200 ring-1 ring-red-500/30";
+  if (type === "Open Mat") return "bg-emerald-600/20 text-emerald-200 ring-1 ring-emerald-500/30";
+  if (type === "Wrestling") return "bg-violet-600/20 text-violet-200 ring-1 ring-violet-500/30";
+  if (type === "Competition") return "bg-amber-600/20 text-amber-200 ring-1 ring-amber-500/30";
+  return "bg-white/10 text-zinc-200 ring-1 ring-white/15";
 };
 
 function categoryDotClass(category: Exclude<TechniqueCategoryKey, "All">) {
@@ -3896,6 +4832,332 @@ function MagnifierIcon() {
         strokeLinecap="round"
       />
     </svg>
+  );
+}
+
+function LocationPinIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5 text-zinc-500" aria-hidden="true" fill="none">
+      <path
+        d="M12 22s7-5.4 7-12a7 7 0 1 0-14 0c0 6.6 7 12 7 12z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 11.5a2.5 2.5 0 1 0-2.5-2.5 2.5 2.5 0 0 0 2.5 2.5z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function LocationMiniIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="M12 22s7-5.4 7-12a7 7 0 1 0-14 0c0 6.6 7 12 7 12z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="M12 6v6l4 2"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function DurationIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="M8 2h8"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M12 7a9 9 0 1 0 9 9"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M12 7v6l3 2"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="m10 6 6 6-6 6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="M14 5h5v5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10 14 19 5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function SessionStarRow({ value }: { value: number }) {
+  return (
+    <>
+      {Array.from({ length: 5 }).map((_, index) => {
+        const starValue = index + 1;
+        const active = starValue <= value;
+        return (
+          <span key={starValue} className={active ? "text-amber-400" : "text-zinc-600"}>
+            <StarOutlineIcon filled={active} />
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+function MinusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path d="M6 12h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PlusSmallIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+      <path
+        d="M12 6v12M6 12h12"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function NotesModal({
+  value,
+  placeholder,
+  onChange,
+  onClose,
+  title,
+  max,
+}: {
+  value: string;
+  placeholder: string;
+  onChange: (next: string) => void;
+  onClose: () => void;
+  title?: string;
+  max?: number;
+}) {
+  const safeTitle = title ?? "Notes";
+  const limit = max ?? 2000;
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        aria-label="Close notes"
+        className="absolute inset-0 bg-black/65"
+        onClick={onClose}
+      />
+      <div className="absolute left-1/2 top-[160px] w-[min(92vw,520px)] -translate-x-1/2 overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-[0_30px_90px_rgba(0,0,0,0.85)]">
+        <header className="flex items-center justify-between px-6 py-5">
+          <p className="text-lg font-semibold text-white">{safeTitle}</p>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <XIcon />
+          </button>
+        </header>
+        <div className="px-6 pb-6">
+          <textarea
+            value={value}
+            onChange={(event) => onChange(event.target.value.slice(0, limit))}
+            placeholder={placeholder}
+            className="min-h-[180px] w-full resize-none rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-600"
+          />
+          <p className="mt-3 text-right text-xs text-zinc-500">
+            {Math.min(value.length, limit)}/{limit}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TagPartnersModal({
+  selectedCount,
+  limit,
+  onClose,
+}: {
+  selectedCount: number;
+  limit: number;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        aria-label="Close tag partners"
+        className="absolute inset-0 bg-black/65"
+        onClick={onClose}
+      />
+      <div className="absolute left-1/2 top-[220px] w-[min(92vw,520px)] -translate-x-1/2 overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-[0_30px_90px_rgba(0,0,0,0.85)]">
+        <header className="flex items-center justify-between px-6 py-5">
+          <p className="text-lg font-semibold text-white">Tag training partners</p>
+          <p className="text-sm text-zinc-500">
+            {selectedCount}/{limit}
+          </p>
+        </header>
+        <div className="px-6 pb-6">
+          <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <SearchIcon />
+            <input
+              placeholder="Search people you follow"
+              className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+            />
+          </div>
+          <p className="mt-8 text-center text-sm text-zinc-500">You&apos;re not following anyone yet.</p>
+        </div>
+        <footer className="border-t border-white/10 bg-black/50 px-6 py-5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-12 w-full rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500"
+          >
+            Done
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function VisibilitySheet({
+  value,
+  onChange,
+  onDone,
+}: {
+  value: SessionVisibility;
+  onChange: (next: SessionVisibility) => void;
+  onDone: () => void;
+}) {
+  const options: Array<{ key: SessionVisibility; title: string; description: string }> = [
+    {
+      key: "Everyone",
+      title: "Everyone",
+      description: "This session is publicly available to all users on FlowRoll.",
+    },
+    {
+      key: "Private",
+      title: "Private",
+      description: "Keep this session private and visible only to you.",
+    },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        aria-label="Close visibility"
+        className="absolute inset-0 bg-black/55"
+        onClick={onDone}
+      />
+      <div className="absolute bottom-0 left-0 right-0 rounded-t-3xl border-t border-white/10 bg-zinc-950 shadow-[0_-30px_90px_rgba(0,0,0,0.9)]">
+        <div className="mx-auto max-w-3xl px-6 pb-8 pt-4">
+          <div className="flex items-center justify-between">
+            <p className="text-lg font-semibold text-white">Visibility</p>
+            <button
+              type="button"
+              onClick={onDone}
+              className="text-sm font-semibold text-blue-400 transition hover:text-blue-300"
+            >
+              Done
+            </button>
+          </div>
+
+          <div className="mt-5 divide-y divide-white/10 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+            {options.map((option) => {
+              const active = option.key === value;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => onChange(option.key)}
+                  className="flex w-full items-start justify-between gap-4 px-5 py-4 text-left transition hover:bg-white/5"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-white">{option.title}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-zinc-500">{option.description}</p>
+                  </div>
+                  <span className={`text-blue-400 ${active ? "opacity-100" : "opacity-0"}`} aria-hidden="true">
+                    ✓
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
