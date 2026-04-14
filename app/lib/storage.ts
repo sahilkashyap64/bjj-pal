@@ -110,9 +110,14 @@ export const saveTourDone = async (done: boolean) => {
 
 export type BjjPalProfileV1 = {
   version: 1;
+  username?: string;
+  displayName?: string;
   name: string;
   belt?: string;
   stripes?: number;
+  gym?: string;
+  bio?: string;
+  privacy?: "Public" | "Private";
   selectedChallenges?: string[];
   onboardingDone: boolean;
 };
@@ -124,8 +129,13 @@ export const loadProfile = async (): Promise<BjjPalProfileV1 | null> => {
   if (profile.version !== 1) return null;
   if (typeof profile.name !== "string") return null;
   if (typeof profile.onboardingDone !== "boolean") return null;
+  if (profile.username != null && typeof profile.username !== "string") return null;
+  if (profile.displayName != null && typeof profile.displayName !== "string") return null;
   if (profile.belt != null && typeof profile.belt !== "string") return null;
   if (profile.stripes != null && typeof profile.stripes !== "number") return null;
+  if (profile.gym != null && typeof profile.gym !== "string") return null;
+  if (profile.bio != null && typeof profile.bio !== "string") return null;
+  if (profile.privacy != null && profile.privacy !== "Public" && profile.privacy !== "Private") return null;
   if (profile.selectedChallenges != null && !Array.isArray(profile.selectedChallenges)) return null;
   if (Array.isArray(profile.selectedChallenges) && !profile.selectedChallenges.every((item) => typeof item === "string")) {
     return null;
@@ -136,6 +146,19 @@ export const loadProfile = async (): Promise<BjjPalProfileV1 | null> => {
 
 export const saveProfile = async (profile: BjjPalProfileV1) => {
   await store.setItem(KEYS.profile, profile);
+};
+
+export const upsertProfile = async (patch: Partial<Omit<BjjPalProfileV1, "version">>) => {
+  const existing = await loadProfile();
+  const merged: BjjPalProfileV1 = {
+    version: 1,
+    name: existing?.name ?? "",
+    onboardingDone: existing?.onboardingDone ?? false,
+    ...existing,
+    ...patch,
+  };
+  await saveProfile(merged);
+  return merged;
 };
 
 export type BjjPalBackupV1 = {

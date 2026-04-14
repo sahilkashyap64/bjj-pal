@@ -11,7 +11,7 @@ import {
   restoreBackup,
   saveSessions,
   saveTechniques,
-  saveProfile,
+  upsertProfile,
   saveTourDone,
 } from "./lib/storage";
 
@@ -118,8 +118,7 @@ export default function Home() {
   const persistProfile = (onboardingDone: boolean) => {
     const trimmedName = name.trim();
     if (!trimmedName) return;
-    saveProfile({
-      version: 1,
+    upsertProfile({
       name: trimmedName,
       belt,
       stripes,
@@ -603,6 +602,18 @@ function MainScreen({ name }: { name: string }) {
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState<null | {
+    username: string;
+    displayName: string;
+    name: string;
+    belt: Belt;
+    stripes: number;
+    gym: string;
+    bio: string;
+    privacy: "Public" | "Private";
+  }>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<TechniqueCategoryKey>("All");
@@ -642,6 +653,7 @@ function MainScreen({ name }: { name: string }) {
   const [sessionDraft, setSessionDraft] = useState<SessionDraft | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [techniques, setTechniques] = useState<Technique[]>([createDefaultTechnique()]);
+  const [profile, setProfile] = useState<Awaited<ReturnType<typeof loadProfile>>>(null);
 
   const normalizeSessions = (input: Session[]) => {
     return input
@@ -690,6 +702,76 @@ function MainScreen({ name }: { name: string }) {
   const tagRef = useRef<HTMLButtonElement | null>(null);
   const techniqueCardRef = useRef<HTMLDivElement | null>(null);
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const beltsList = belts;
+
+  const formatBeltLabel = (beltValue: string | undefined, stripesValue: number | undefined) => {
+    const safeBelt = typeof beltValue === "string" && beltsList.includes(beltValue as Belt) ? (beltValue as Belt) : null;
+    const safeStripes = typeof stripesValue === "number" && Number.isFinite(stripesValue) ? Math.max(0, Math.floor(stripesValue)) : 0;
+    if (!safeBelt) return "Unranked";
+    if (safeStripes === 0) return `${safeBelt} belt`;
+    return `${safeBelt} belt (${safeStripes} stripe${safeStripes === 1 ? "" : "s"})`;
+  };
+
+  const ensureUsername = (candidate: string | undefined) => {
+    const normalized = (candidate ?? "").trim();
+    if (normalized) return normalized;
+    const id = cryptoSafeId().replace(/-/g, "").slice(0, 10);
+    return `grappler_${id}`;
+  };
+
+  const openEditProfile = () => {
+    const username = ensureUsername(profile?.username);
+    const displayName = (profile?.displayName ?? "").trim();
+    const personalName = (profile?.name ?? name ?? "").trim();
+    const beltValue = typeof profile?.belt === "string" && beltsList.includes(profile.belt as Belt) ? (profile.belt as Belt) : "White";
+    const stripesValue =
+      typeof profile?.stripes === "number" && Number.isFinite(profile.stripes)
+        ? Math.max(0, Math.floor(profile.stripes))
+        : 0;
+    const allowed = stripeOptionsForBelt(beltValue);
+    const safeStripes = allowed.includes(stripesValue) ? stripesValue : allowed[0];
+
+    setProfileDraft({
+      username,
+      displayName,
+      name: personalName,
+      belt: beltValue,
+      stripes: safeStripes,
+      gym: (profile?.gym ?? "").trim(),
+      bio: (profile?.bio ?? "").trim(),
+      privacy: profile?.privacy ?? "Public",
+    });
+    setEditProfileOpen(true);
+  };
+
+  const openProfile = () => {
+    setProfileOpen(true);
+    if (profile?.username && profile.username.trim()) return;
+    upsertProfile({ username: ensureUsername(profile?.username) })
+      .then((next) => setProfile(next))
+      .catch(() => {});
+  };
+
+  const saveProfileDraftChanges = async () => {
+    if (!profileDraft) return;
+    const trimmedName = profileDraft.name.trim();
+    if (!trimmedName) return;
+    const next = await upsertProfile({
+      username: profileDraft.username.trim(),
+      displayName: profileDraft.displayName.trim(),
+      name: trimmedName,
+      belt: profileDraft.belt,
+      stripes: profileDraft.stripes,
+      gym: profileDraft.gym.trim(),
+      bio: profileDraft.bio.trim(),
+      privacy: profileDraft.privacy,
+      onboardingDone: true,
+    });
+    setProfile(next);
+    setEditProfileOpen(false);
+    setProfileOpen(true);
+  };
 
   const tourSteps = useMemo(
     () =>
@@ -760,15 +842,17 @@ function MainScreen({ name }: { name: string }) {
     (async () => {
       try {
         await migrateLocalStorageToLocalForageIfNeeded();
-        const [loadedSessions, loadedTechniques, tourDone] = await Promise.all([
+        const [loadedSessions, loadedTechniques, tourDone, loadedProfile] = await Promise.all([
           loadSessions<Session>(),
           loadTechniques<Technique>(),
           loadTourDone(),
+          loadProfile(),
         ]);
         if (cancelled) return;
         setSessions(normalizeSessions(loadedSessions));
         const normalizedTechniques = normalizeTechniques(loadedTechniques);
         setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
+        setProfile(loadedProfile);
         setShowTour(!tourDone);
         setTourStep(0);
       } catch {
@@ -787,14 +871,16 @@ function MainScreen({ name }: { name: string }) {
 
   const reloadAllFromStorage = async () => {
     await migrateLocalStorageToLocalForageIfNeeded();
-    const [loadedSessions, loadedTechniques, tourDone] = await Promise.all([
+    const [loadedSessions, loadedTechniques, tourDone, loadedProfile] = await Promise.all([
       loadSessions<Session>(),
       loadTechniques<Technique>(),
       loadTourDone(),
+      loadProfile(),
     ]);
     setSessions(normalizeSessions(loadedSessions));
     const normalizedTechniques = normalizeTechniques(loadedTechniques);
     setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
+    setProfile(loadedProfile);
     setShowTour(!tourDone);
     setTourStep(0);
   };
@@ -1182,7 +1268,7 @@ function MainScreen({ name }: { name: string }) {
 
     return (
       <SessionsHomeScreen
-        name={name}
+        name={(profile?.displayName && profile.displayName.trim()) || (profile?.name && profile.name.trim()) || name}
         tab={sessionsTab}
         onTabChange={setSessionsTab}
         filters={sessionFilters}
@@ -1377,10 +1463,20 @@ function MainScreen({ name }: { name: string }) {
       <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-24 pt-6 sm:px-8">
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200">
+            <button
+              type="button"
+              aria-label="Open profile"
+              onClick={openProfile}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+            >
               <UserIcon />
-            </div>
-            <p className="text-lg font-semibold">{name || "Sahil"}</p>
+            </button>
+            <p className="text-lg font-semibold">
+              {(profile?.displayName && profile.displayName.trim()) ||
+                (profile?.name && profile.name.trim()) ||
+                name ||
+                "You"}
+            </p>
           </div>
           <button
             type="button"
@@ -1849,6 +1945,271 @@ function MainScreen({ name }: { name: string }) {
                   <p className="mt-4 text-sm text-zinc-300">{settingsMessage}</p>
                 ) : null}
               </div>
+            </div>
+          </div>
+        ) : null}
+
+        {profileOpen ? (
+          <div className="fixed inset-0 z-50">
+            <button
+              type="button"
+              aria-label="Close profile"
+              className="absolute inset-0 bg-black/65"
+              onClick={() => setProfileOpen(false)}
+            />
+            <div className="absolute left-1/2 top-[90px] w-[min(92vw,520px)] -translate-x-1/2 overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-[0_30px_90px_rgba(0,0,0,0.85)]">
+              <header className="flex items-center justify-between px-6 py-5">
+                <div className="flex items-center gap-4">
+                  <div className="grid h-14 w-14 place-items-center rounded-full bg-white/10 text-xl font-semibold text-white ring-1 ring-white/10">
+                    {(profile?.displayName?.trim()?.[0] || profile?.name?.trim()?.[0] || name?.trim()?.[0] || "U").toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-lg font-semibold text-white">
+                      {(profile?.displayName && profile.displayName.trim()) ||
+                        (profile?.name && profile.name.trim()) ||
+                        name ||
+                        "You"}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-zinc-500">
+                      @{ensureUsername(profile?.username)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label="Edit profile"
+                    onClick={() => {
+                      setProfileOpen(false);
+                      openEditProfile();
+                    }}
+                    className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+                  >
+                    <PencilIcon />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Close"
+                    onClick={() => setProfileOpen(false)}
+                    className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+                  >
+                    <XIcon />
+                  </button>
+                </div>
+              </header>
+
+              <div className="border-t border-white/10 px-6 py-6">
+                <div className="grid gap-4">
+                  <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Belt Rank</p>
+                    <p className="mt-2 text-sm font-semibold text-zinc-100">
+                      {formatBeltLabel(profile?.belt, profile?.stripes)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Gym / Academy</p>
+                    <p className="mt-2 text-sm text-zinc-200">{profile?.gym?.trim() || "—"}</p>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Bio</p>
+                    <p className="mt-2 text-sm leading-relaxed text-zinc-200">{profile?.bio?.trim() || "—"}</p>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/20 px-5 py-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.35em] text-zinc-500">Account Privacy</p>
+                    <p className="mt-2 text-sm text-zinc-200">{profile?.privacy ?? "Public"}</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Public keeps your profile discoverable. Private hides you from search and following.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {editProfileOpen && profileDraft ? (
+          <div className="fixed inset-0 z-50 bg-black text-white">
+            <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-20 pt-6 sm:px-8">
+              <header className="flex items-center justify-between">
+                <button
+                  type="button"
+                  aria-label="Back"
+                  onClick={() => {
+                    setEditProfileOpen(false);
+                    setProfileOpen(true);
+                  }}
+                  className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+                >
+                  <BackIcon />
+                </button>
+                <p className="text-lg font-semibold">Edit Profile</p>
+                <button
+                  type="button"
+                  aria-label="Save profile"
+                  onClick={() => saveProfileDraftChanges().catch(() => {})}
+                  className="grid h-10 w-10 place-items-center rounded-lg bg-blue-600 text-white transition hover:bg-blue-500"
+                >
+                  <SaveIcon />
+                </button>
+              </header>
+
+              <main className="mt-6 flex-1 space-y-7">
+                <section className="flex flex-col items-center gap-3">
+                  <div className="grid h-20 w-20 place-items-center rounded-full bg-white/10 text-2xl font-semibold text-white ring-1 ring-white/10">
+                    {(profileDraft.displayName.trim()?.[0] || profileDraft.name.trim()?.[0] || "U").toUpperCase()}
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-full bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-300 ring-1 ring-white/10 transition hover:bg-white/10"
+                  >
+                    <MediaIcon />
+                    Change Photo
+                  </button>
+                </section>
+
+                <section className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Username</p>
+                  <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                    <p className="text-sm font-semibold text-zinc-400">@</p>
+                    <input
+                      value={profileDraft.username}
+                      onChange={(event) => setProfileDraft((current) => (current ? { ...current, username: event.target.value } : current))}
+                      placeholder="username"
+                      className="w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setProfileDraft((current) =>
+                          current ? { ...current, username: ensureUsername("") } : current,
+                        )
+                      }
+                      className="rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/15"
+                    >
+                      Random
+                    </button>
+                  </div>
+                </section>
+
+                <section className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Display Name</p>
+                  <input
+                    value={profileDraft.displayName}
+                    onChange={(event) => setProfileDraft((current) => (current ? { ...current, displayName: event.target.value } : current))}
+                    placeholder="Enter display name"
+                    className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                  />
+                </section>
+
+                <section className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Name</p>
+                  <input
+                    value={profileDraft.name}
+                    onChange={(event) => setProfileDraft((current) => (current ? { ...current, name: event.target.value } : current))}
+                    placeholder="Your name"
+                    className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                  />
+                </section>
+
+                <section className="space-y-3">
+                  <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Belt Rank</p>
+                  <div className="flex flex-wrap gap-3">
+                    {beltsList.map((beltValue) => {
+                      const active = profileDraft.belt === beltValue;
+                      return (
+                        <button
+                          key={beltValue}
+                          type="button"
+                          onClick={() => {
+                            setProfileDraft((current) => {
+                              if (!current) return current;
+                              const allowed = stripeOptionsForBelt(beltValue);
+                              const nextStripes = allowed.includes(current.stripes) ? current.stripes : allowed[0];
+                              return { ...current, belt: beltValue, stripes: nextStripes };
+                            });
+                          }}
+                          className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                            active ? "bg-white text-black" : "bg-white/5 text-zinc-400 ring-1 ring-white/10 hover:bg-white/10 hover:text-zinc-200"
+                          }`}
+                        >
+                          {beltValue}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Stripes</p>
+                  <div className="flex flex-wrap gap-3">
+                    {stripeOptionsForBelt(profileDraft.belt).map((stripe) => {
+                      const active = profileDraft.stripes === stripe;
+                      return (
+                        <button
+                          key={stripe}
+                          type="button"
+                          onClick={() => setProfileDraft((current) => (current ? { ...current, stripes: stripe } : current))}
+                          className={`min-w-[44px] rounded-xl px-4 py-2 text-xs font-semibold transition ${
+                            active ? "bg-white text-black" : "bg-white/5 text-zinc-400 ring-1 ring-white/10 hover:bg-white/10 hover:text-zinc-200"
+                          }`}
+                        >
+                          {stripe}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Gym / Academy</p>
+                  <input
+                    value={profileDraft.gym}
+                    onChange={(event) => setProfileDraft((current) => (current ? { ...current, gym: event.target.value } : current))}
+                    placeholder="Enter gym name"
+                    className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                  />
+                </section>
+
+                <section className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Bio</p>
+                  <textarea
+                    value={profileDraft.bio}
+                    onChange={(event) => setProfileDraft((current) => (current ? { ...current, bio: event.target.value.slice(0, 200) } : current))}
+                    placeholder="Tell us about yourself..."
+                    className="min-h-[140px] w-full resize-none rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-600"
+                  />
+                  <p className="text-right text-xs text-zinc-500">{Math.min(profileDraft.bio.length, 200)}/200</p>
+                </section>
+
+                <section className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Account Privacy</p>
+                  <div className="flex gap-3">
+                    {(["Public", "Private"] as const).map((privacy) => {
+                      const active = profileDraft.privacy === privacy;
+                      return (
+                        <button
+                          key={privacy}
+                          type="button"
+                          onClick={() => setProfileDraft((current) => (current ? { ...current, privacy } : current))}
+                          className={`flex-1 rounded-2xl border px-5 py-4 text-left transition ${
+                            active ? "border-blue-500/60 bg-blue-600/20" : "border-white/10 bg-white/5 hover:bg-white/10"
+                          }`}
+                        >
+                          <p className="text-sm font-semibold text-white">{privacy}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                            {privacy === "Public"
+                              ? "Profile is discoverable in search."
+                              : "Profile is hidden from search and following."}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              </main>
             </div>
           </div>
         ) : null}
@@ -4823,6 +5184,31 @@ function PencilIcon() {
       />
       <path
         d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function SaveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+      <path
+        d="M4 7a2 2 0 0 1 2-2h10l4 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 5v6h8V5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 21v-6h8v6"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinejoin="round"
