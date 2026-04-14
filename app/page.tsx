@@ -1,6 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  createBackup,
+  loadSessions,
+  loadTechniques,
+  loadTourDone,
+  migrateLocalStorageToLocalForageIfNeeded,
+  restoreBackup,
+  saveSessions,
+  saveTechniques,
+  saveTourDone,
+} from "./lib/storage";
 
 const belts = ["White", "Blue", "Purple", "Brown", "Black"] as const;
 type Belt = (typeof belts)[number];
@@ -17,18 +28,6 @@ const challenges = [
   "Getting beat by the same people",
   "Not sure what my gameplan should be",
 ];
-
-const STORAGE_KEYS = {
-  sessions: "bjjpal_sessions_v1",
-  techniques: "bjjpal_techniques_v1",
-  tourDone: "bjjpal_tour_done",
-} as const;
-
-const LEGACY_STORAGE_KEYS = {
-  sessions: "flowroll_sessions_v1",
-  techniques: "flowroll_techniques_v1",
-  tourDone: "flowroll_tour_done",
-} as const;
 
 export default function Home() {
   const [step, setStep] = useState(0);
@@ -532,6 +531,9 @@ function MainScreen({ name }: { name: string }) {
   const [activeTab, setActiveTab] = useState<"library" | "systems" | "discover">("library");
   const [showTour, setShowTour] = useState(false);
   const [tourStep, setTourStep] = useState(0);
+  const [storageLoaded, setStorageLoaded] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<TechniqueCategoryKey>("All");
@@ -569,16 +571,13 @@ function MainScreen({ name }: { name: string }) {
   const [sessionScreen, setSessionScreen] = useState<"home" | "new" | "detail" | "edit">("home");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionDraft, setSessionDraft] = useState<SessionDraft | null>(null);
-  const [sessions, setSessions] = useState<Session[]>(() => {
-    try {
-      if (typeof window === "undefined") return [];
-      const raw =
-        window.localStorage.getItem(STORAGE_KEYS.sessions) ??
-        window.localStorage.getItem(LEGACY_STORAGE_KEYS.sessions);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as Session[];
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map((session) => {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [techniques, setTechniques] = useState<Technique[]>([createDefaultTechnique()]);
+
+  const normalizeSessions = (input: Session[]) => {
+    return input
+      .filter((session): session is Session => Boolean(session) && typeof session === "object")
+      .map((session) => {
         const legacySubmissions = (session as { submissions?: unknown }).submissions;
         const legacyText = typeof legacySubmissions === "string" ? legacySubmissions : "";
         const legacyEntries = legacyText
@@ -594,7 +593,8 @@ function MainScreen({ name }: { name: string }) {
                 const name = (entry as { name?: unknown }).name;
                 const count = (entry as { count?: unknown }).count;
                 if (typeof name !== "string" || !name.trim()) return null;
-                const safeCount = typeof count === "number" && Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
+                const safeCount =
+                  typeof count === "number" && Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
                 return { name: name.trim(), count: safeCount };
               })
               .filter((entry): entry is SessionSubmissionEntry => Boolean(entry))
@@ -602,36 +602,25 @@ function MainScreen({ name }: { name: string }) {
 
         return { ...session, submissionEntries } as Session;
       });
-    } catch {
-      return [];
-    }
-  });
+  };
 
-  const [techniques, setTechniques] = useState<Technique[]>(() => {
-    try {
-      if (typeof window === "undefined") return [createDefaultTechnique()];
-      const raw =
-        window.localStorage.getItem(STORAGE_KEYS.techniques) ??
-        window.localStorage.getItem(LEGACY_STORAGE_KEYS.techniques);
-      if (!raw) return [createDefaultTechnique()];
-      const parsed = JSON.parse(raw) as Technique[];
-      if (!Array.isArray(parsed) || parsed.length === 0) return [createDefaultTechnique()];
-      return parsed.map((technique) => ({
+  const normalizeTechniques = (input: Technique[]) => {
+    return input
+      .filter((technique): technique is Technique => Boolean(technique) && typeof technique === "object")
+      .map((technique) => ({
         ...technique,
         linkedTechniqueIds: Array.isArray((technique as { linkedTechniqueIds?: unknown }).linkedTechniqueIds)
           ? (technique as { linkedTechniqueIds: string[] }).linkedTechniqueIds
           : [],
       }));
-    } catch {
-      return [createDefaultTechnique()];
-    }
-  });
+  };
 
   const fabRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const filterRef = useRef<HTMLButtonElement | null>(null);
   const tagRef = useRef<HTMLButtonElement | null>(null);
   const techniqueCardRef = useRef<HTMLDivElement | null>(null);
+  const backupFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const tourSteps = useMemo(
     () =>
@@ -697,37 +686,84 @@ function MainScreen({ name }: { name: string }) {
   }, [isSessionSortOpen]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.techniques, JSON.stringify(techniques));
-    } catch {
-      // ignore
-    }
-  }, [techniques]);
+    let cancelled = false;
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.sessions, JSON.stringify(sessions));
-    } catch {
-      // ignore
-    }
-  }, [sessions]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    queueMicrotask(() => {
+    (async () => {
       try {
-        const doneValue =
-          window.localStorage.getItem(STORAGE_KEYS.tourDone) ??
-          window.localStorage.getItem(LEGACY_STORAGE_KEYS.tourDone);
-        const done = doneValue === "1";
-        setShowTour(!done);
+        await migrateLocalStorageToLocalForageIfNeeded();
+        const [loadedSessions, loadedTechniques, tourDone] = await Promise.all([
+          loadSessions<Session>(),
+          loadTechniques<Technique>(),
+          loadTourDone(),
+        ]);
+        if (cancelled) return;
+        setSessions(normalizeSessions(loadedSessions));
+        const normalizedTechniques = normalizeTechniques(loadedTechniques);
+        setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
+        setShowTour(!tourDone);
         setTourStep(0);
       } catch {
+        if (cancelled) return;
         setShowTour(true);
         setTourStep(0);
+      } finally {
+        if (!cancelled) setStorageLoaded(true);
       }
-    });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const reloadAllFromStorage = async () => {
+    await migrateLocalStorageToLocalForageIfNeeded();
+    const [loadedSessions, loadedTechniques, tourDone] = await Promise.all([
+      loadSessions<Session>(),
+      loadTechniques<Technique>(),
+      loadTourDone(),
+    ]);
+    setSessions(normalizeSessions(loadedSessions));
+    const normalizedTechniques = normalizeTechniques(loadedTechniques);
+    setTechniques(normalizedTechniques.length > 0 ? normalizedTechniques : [createDefaultTechnique()]);
+    setShowTour(!tourDone);
+    setTourStep(0);
+  };
+
+  const exportBackupFile = async () => {
+    setSettingsMessage(null);
+    const backup = await createBackup();
+    const text = JSON.stringify(backup, null, 2);
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `bjj-pal-backup-${stamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setSettingsMessage("Backup downloaded.");
+  };
+
+  const importBackupFile = async (file: File) => {
+    setSettingsMessage(null);
+    const text = await file.text();
+    await restoreBackup(text);
+    await reloadAllFromStorage();
+    setSettingsMessage("Backup restored.");
+  };
+
+  useEffect(() => {
+    if (!storageLoaded) return;
+    saveTechniques(techniques).catch(() => {});
+  }, [storageLoaded, techniques]);
+
+  useEffect(() => {
+    if (!storageLoaded) return;
+    saveSessions(sessions).catch(() => {});
+  }, [sessions, storageLoaded]);
 
   useEffect(() => {
     if (!lastCopiedPromptAt) return;
@@ -767,11 +803,7 @@ function MainScreen({ name }: { name: string }) {
   }, [showTour, tourStep, tourSteps]);
 
   const finishTour = () => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.tourDone, "1");
-    } catch {
-      // ignore
-    }
+    saveTourDone(true).catch(() => {});
     setShowTour(false);
   };
 
@@ -1284,6 +1316,7 @@ function MainScreen({ name }: { name: string }) {
           <button
             type="button"
             aria-label="Settings"
+            onClick={() => setSettingsOpen(true)}
             className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
           >
             <GearIcon />
@@ -1651,6 +1684,102 @@ function MainScreen({ name }: { name: string }) {
                   borderBottom: popover.placeBelow ? "10px solid white" : undefined,
                 }}
               />
+            </div>
+          </div>
+        ) : null}
+
+        {settingsOpen ? (
+          <div className="fixed inset-0 z-50">
+            <button
+              type="button"
+              aria-label="Close settings"
+              className="absolute inset-0 bg-black/65"
+              onClick={() => {
+                setSettingsOpen(false);
+                setSettingsMessage(null);
+              }}
+            />
+            <div className="absolute left-1/2 top-[140px] w-[min(92vw,520px)] -translate-x-1/2 overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-[0_30px_90px_rgba(0,0,0,0.85)]">
+              <header className="flex items-center justify-between px-6 py-5">
+                <div>
+                  <p className="text-lg font-semibold text-white">Backup &amp; Restore</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Sessions: {sessions.length} • Techniques: {techniques.length}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => {
+                    setSettingsOpen(false);
+                    setSettingsMessage(null);
+                  }}
+                  className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+                >
+                  <XIcon />
+                </button>
+              </header>
+
+              <div className="border-t border-white/10 px-6 py-6">
+                <p className="text-sm leading-relaxed text-zinc-400">
+                  Your data is stored offline on this device (IndexedDB). Export a backup to share or move to a new
+                  phone.
+                </p>
+
+                <div className="mt-5 grid gap-3">
+                  <button
+                    type="button"
+                    disabled={!storageLoaded}
+                    onClick={() => exportBackupFile().catch((error: unknown) => {
+                      const message = error instanceof Error ? error.message : "Export failed.";
+                      setSettingsMessage(message);
+                    })}
+                    className="h-12 w-full rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-600/40"
+                  >
+                    Export backup
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!storageLoaded}
+                    onClick={() => backupFileInputRef.current?.click()}
+                    className="h-12 w-full rounded-xl bg-white/10 text-sm font-semibold text-zinc-200 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:bg-white/5"
+                  >
+                    Import backup
+                  </button>
+
+                  <input
+                    ref={backupFileInputRef}
+                    type="file"
+                    accept="application/json"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null;
+                      event.target.value = "";
+                      if (!file) return;
+                      importBackupFile(file).catch((error: unknown) => {
+                        const message = error instanceof Error ? error.message : "Import failed.";
+                        setSettingsMessage(message);
+                      });
+                    }}
+                  />
+
+                  <button
+                    type="button"
+                    disabled={!storageLoaded}
+                    onClick={() => reloadAllFromStorage().then(() => setSettingsMessage("Reloaded.")).catch(() => {
+                      setSettingsMessage("Reload failed.");
+                    })}
+                    className="h-12 w-full rounded-xl bg-white/5 text-sm font-semibold text-zinc-300 ring-1 ring-white/10 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5"
+                  >
+                    Reload from storage
+                  </button>
+                </div>
+
+                {settingsMessage ? (
+                  <p className="mt-4 text-sm text-zinc-300">{settingsMessage}</p>
+                ) : null}
+              </div>
             </div>
           </div>
         ) : null}
