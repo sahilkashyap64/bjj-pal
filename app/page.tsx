@@ -700,9 +700,11 @@ function MainScreen({ name }: { name: string }) {
   const [sessionFilterDraft, setSessionFilterDraft] = useState<SessionFilters>(sessionFilters);
   const [sessionSort, setSessionSort] = useState<"New" | "Old" | "A-Z">("New");
   const [isSessionSortOpen, setIsSessionSortOpen] = useState(false);
-  const [sessionScreen, setSessionScreen] = useState<"home" | "new" | "detail" | "edit">("home");
+  const [sessionScreen, setSessionScreen] = useState<"home" | "new" | "detail" | "edit" | "day">("home");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionDraft, setSessionDraft] = useState<SessionDraft | null>(null);
+  const [sessionDayIso, setSessionDayIso] = useState<string | null>(null);
+  const [sessionDayReturnTab, setSessionDayReturnTab] = useState<"you" | "sessions">("sessions");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [techniques, setTechniques] = useState<Technique[]>([createDefaultTechnique()]);
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof loadProfile>>>(null);
@@ -955,14 +957,9 @@ function MainScreen({ name }: { name: string }) {
   const gotoSessionsForDate = (isoDate: string) => {
     setBottomTab("sessions");
     setSessionsTab("my_sessions");
-    const nextFilters: SessionFilters = {
-      ...sessionFilters,
-      startDate: isoDate,
-      endDate: isoDate,
-    };
-    setSessionFilters(nextFilters);
-    setSessionFilterDraft(nextFilters);
-    setSessionScreen("home");
+    setSessionDayIso(isoDate);
+    setSessionDayReturnTab("you");
+    setSessionScreen("day");
     setActiveSessionId(null);
     setIsSessionSortOpen(false);
     setIsSessionFilterOpen(false);
@@ -1071,6 +1068,17 @@ function MainScreen({ name }: { name: string }) {
     }
 
     if (bottomTab === "sessions") {
+      if (sessionScreen === "day") {
+        if (sessionDayReturnTab === "you") {
+          setBottomTab("you");
+          setSessionScreen("home");
+          setSessionDayIso(null);
+          return true;
+        }
+        setSessionScreen("home");
+        setSessionDayIso(null);
+        return true;
+      }
       if (sessionScreen === "new" || sessionScreen === "edit") {
         setSessionDraft(null);
         setActiveSessionId(null);
@@ -1596,6 +1604,29 @@ function MainScreen({ name }: { name: string }) {
             if (!activeSession) return;
             setSessionDraft(activeSession);
             setSessionScreen("edit");
+          }}
+        />
+      );
+    }
+
+    if (sessionScreen === "day" && sessionDayIso) {
+      return (
+        <SelectTrainingSessionScreen
+          isoDate={sessionDayIso}
+          sessions={sessions}
+          onBack={() => {
+            setSessionDayIso(null);
+            if (sessionDayReturnTab === "you") {
+              setBottomTab("you");
+              setSessionScreen("home");
+              return;
+            }
+            setSessionScreen("home");
+          }}
+          onSelect={(sessionId) => {
+            setActiveSessionId(sessionId);
+            setSessionDraft(null);
+            setSessionScreen("detail");
           }}
         />
       );
@@ -4324,6 +4355,129 @@ function NewSessionScreen({
           max={500}
         />
       ) : null}
+    </div>
+  );
+}
+
+function SelectTrainingSessionScreen({
+  isoDate,
+  sessions,
+  onBack,
+  onSelect,
+}: {
+  isoDate: string;
+  sessions: Session[];
+  onBack: () => void;
+  onSelect: (sessionId: string) => void;
+}) {
+  const safeDate = new Date(`${isoDate}T00:00:00`);
+  const dateLabel = Number.isNaN(safeDate.getTime())
+    ? isoDate
+    : new Intl.DateTimeFormat(undefined, {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      }).format(safeDate);
+
+  const sessionsForDate = useMemo(() => {
+    return sessions
+      .filter((session) => session.date === isoDate)
+      .slice()
+      .sort((a, b) => (b.time || "").localeCompare(a.time || ""));
+  }, [isoDate, sessions]);
+
+  const allSessionTypes = ["Gi", "No-Gi", "Open Mat", "Wrestling", "Competition", "Other"] as const;
+
+  const getSafeType = (value: string) => {
+    const trimmed = value.trim();
+    if ((allSessionTypes as readonly string[]).includes(trimmed)) return trimmed as SessionType;
+    return "Other";
+  };
+
+  const getSubmissionCount = (session: Session) => {
+    const entries = Array.isArray(session.submissionEntries) ? session.submissionEntries : [];
+    return entries.reduce((sum, entry) => {
+      const add = typeof entry.count === "number" && Number.isFinite(entry.count) ? entry.count : 0;
+      return sum + add;
+    }, 0);
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-16 pt-6 sm:px-8">
+        <header className="flex items-center gap-3">
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={onBack}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+          >
+            <BackIcon />
+          </button>
+          <div className="min-w-0">
+            <p className="text-lg font-semibold text-white">Select Training Session</p>
+            <p className="mt-0.5 truncate text-sm text-zinc-500">{dateLabel}</p>
+          </div>
+        </header>
+
+        <main className="mt-6 flex-1 space-y-4">
+          {sessionsForDate.length === 0 ? (
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-center">
+              <p className="text-sm font-semibold text-white">No sessions logged</p>
+              <p className="mt-2 text-sm text-zinc-500">Log a session for this day to see it here.</p>
+            </div>
+          ) : (
+            sessionsForDate.map((session) => {
+              const safeType = getSafeType(session.type || "");
+              const submissionsCount = getSubmissionCount(session);
+              const timeLabel = session.time ? formatShortTime(session.time) : "";
+              const notesSnippet = session.notes?.trim() ?? "";
+              const locationSnippet = session.location?.trim() ?? "";
+              const satisfaction = typeof session.satisfaction === "number" ? Math.max(0, Math.min(5, session.satisfaction)) : 0;
+
+              return (
+                <button
+                  key={session.id}
+                  type="button"
+                  onClick={() => onSelect(session.id)}
+                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-left shadow-[0_18px_60px_rgba(0,0,0,0.45)] transition hover:bg-white/10"
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <span className={`inline-flex rounded-full px-4 py-2 text-xs font-semibold ${sessionTypePillClass(safeType)}`}>
+                      {session.type?.trim() ? session.type : "Other"}
+                    </span>
+                    {timeLabel ? (
+                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-zinc-500">
+                        <ClockIcon />
+                        {timeLabel}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {locationSnippet ? (
+                    <p className="mt-3 inline-flex items-center gap-2 text-sm text-zinc-300">
+                      <LocationMiniIcon />
+                      {locationSnippet}
+                    </p>
+                  ) : null}
+
+                  {notesSnippet ? (
+                    <p className="mt-2 text-sm text-zinc-400">{notesSnippet}</p>
+                  ) : null}
+
+                  <div className="mt-4 flex items-center justify-between gap-4 text-xs text-zinc-500">
+                    <p>Satisfaction: {satisfaction}/5</p>
+                    <p>
+                      {submissionsCount} submission{submissionsCount === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </main>
+      </div>
     </div>
   );
 }
