@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  romanizeHindiTranscript,
   cryptoSafeId,
   categoryDotClass,
   categoryPillClass,
@@ -13,6 +14,7 @@ import {
   type TechniqueCategoryKey,
   type TechniqueDraft,
 } from "../lib/domain";
+import { deleteVoiceNote } from "../lib/storage";
 import {
   BackIcon,
   ChevronDownSmallIcon,
@@ -29,6 +31,7 @@ import {
   UserIcon,
   XIcon,
 } from "./icons";
+import { VoiceNotePlayer, VoiceNoteRecorder } from "./sessions";
 
 const tagGroups = [
   {
@@ -1044,6 +1047,29 @@ export function TechniqueDetailScreen({
 
           <section className="space-y-3">
             <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Voice Note</p>
+              <button
+                type="button"
+                aria-label="Edit voice note"
+                onClick={onEdit}
+                className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+              >
+                <PencilIcon />
+              </button>
+            </div>
+            {technique.voiceNoteId ? (
+              <VoiceNotePlayer
+                voiceNoteId={technique.voiceNoteId}
+                transcript={technique.voiceNoteTranscript}
+                romanizedTranscript={technique.voiceNoteTranscriptRomanized}
+              />
+            ) : (
+              <p className="text-sm text-zinc-500">No voice note yet.</p>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
               <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Links &amp; References</p>
               <button
                 type="button"
@@ -1131,6 +1157,8 @@ export function TechniqueEditScreen({
   onDelete,
   onImport,
   allTechniques,
+  transcriptLanguage,
+  onTranscriptLanguageChange,
 }: {
   draft: TechniqueDraft;
   onDraftChange: (next: TechniqueDraft) => void;
@@ -1139,6 +1167,8 @@ export function TechniqueEditScreen({
   onDelete: () => void;
   onImport: () => void;
   allTechniques: Technique[];
+  transcriptLanguage?: string;
+  onTranscriptLanguageChange: (language: string) => void;
 }) {
   const update = (patch: Partial<TechniqueDraft>) => onDraftChange({ ...draft, ...patch });
   const [isTagModalOpen, setIsTagModalOpen] = useState(false);
@@ -1147,6 +1177,8 @@ export function TechniqueEditScreen({
   const [linkedQuery, setLinkedQuery] = useState("");
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [linkDraft, setLinkDraft] = useState("");
+  const [voiceToast, setVoiceToast] = useState<null | { message: string; at: number }>(null);
+  const voiceToastTimeoutRef = useRef<number | null>(null);
 
   const linkLimit = 10;
 
@@ -1179,6 +1211,27 @@ export function TechniqueEditScreen({
   const openLinkedModal = () => {
     setLinkedQuery("");
     setIsLinkedModalOpen(true);
+  };
+
+  const deleteDraftVoiceNote = async () => {
+    const id = typeof draft.voiceNoteId === "string" ? draft.voiceNoteId : "";
+    if (!id) return;
+    const ok = window.confirm("Remove this voice note from the technique?");
+    if (!ok) return;
+    await deleteVoiceNote(id).catch(() => {});
+    update({ voiceNoteId: null, voiceNoteTranscript: null, voiceNoteTranscriptRomanized: null });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (voiceToastTimeoutRef.current) window.clearTimeout(voiceToastTimeoutRef.current);
+    };
+  }, []);
+
+  const showVoiceToast = (message: string) => {
+    setVoiceToast({ message, at: Date.now() });
+    if (voiceToastTimeoutRef.current) window.clearTimeout(voiceToastTimeoutRef.current);
+    voiceToastTimeoutRef.current = window.setTimeout(() => setVoiceToast(null), 2000);
   };
 
   return (
@@ -1291,6 +1344,34 @@ export function TechniqueEditScreen({
               placeholder="Add notes about the technique, key details, or what you learned..."
               className="min-h-[140px] w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-600"
             />
+          </section>
+
+          <section className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.35em] text-zinc-500">Voice Note</p>
+            {draft.voiceNoteId ? (
+              <div className="space-y-3">
+                <VoiceNotePlayer
+                  voiceNoteId={draft.voiceNoteId}
+                  transcript={draft.voiceNoteTranscript}
+                  romanizedTranscript={draft.voiceNoteTranscriptRomanized}
+                  onDelete={deleteDraftVoiceNote}
+                />
+              </div>
+            ) : (
+              <VoiceNoteRecorder
+                language={transcriptLanguage}
+                onLanguageChange={onTranscriptLanguageChange}
+                onSaved={({ id, transcript }) => {
+                  const romanizedTranscript = transcript ? romanizeHindiTranscript(transcript) : null;
+                  update({
+                    voiceNoteId: id,
+                    voiceNoteTranscript: transcript ?? null,
+                    voiceNoteTranscriptRomanized: romanizedTranscript,
+                  });
+                  showVoiceToast(transcript && transcript.trim() ? "Voice note + transcript saved" : "Voice note saved");
+                }}
+              />
+            )}
           </section>
 
           <section className="space-y-3">
@@ -1453,6 +1534,14 @@ export function TechniqueEditScreen({
           }}
           onDone={() => setIsLinkedModalOpen(false)}
         />
+      ) : null}
+
+      {voiceToast ? (
+        <div className="fixed bottom-[92px] left-1/2 z-50 w-[min(92vw,520px)] -translate-x-1/2">
+          <div className="rounded-2xl border border-white/10 bg-zinc-950/95 px-5 py-3 text-sm font-semibold text-white shadow-[0_20px_80px_rgba(0,0,0,0.75)] backdrop-blur">
+            {voiceToast.message}
+          </div>
+        </div>
       ) : null}
     </div>
   );

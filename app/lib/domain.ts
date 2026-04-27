@@ -50,6 +50,9 @@ export type Technique = {
   dateIso: string;
   tags: string[];
   notes: string;
+  voiceNoteId?: string | null;
+  voiceNoteTranscript?: string | null;
+  voiceNoteTranscriptRomanized?: string | null;
   links: TechniqueLink[];
   linkedTechniqueIds: string[];
   favorite: boolean;
@@ -107,6 +110,9 @@ export const createDefaultTechnique = (): Technique => ({
   tags: ["Beginner", "Closed Guard"],
   notes:
     "A fundamental submission from closed guard. Control opponent's posture, isolate one arm, throw leg over shoulder, and squeeze with your legs while pulling down on the head.",
+  voiceNoteId: null,
+  voiceNoteTranscript: null,
+  voiceNoteTranscriptRomanized: null,
   links: [
     {
       id: "link-1",

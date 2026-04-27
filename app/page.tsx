@@ -449,12 +449,36 @@ function MainScreen({ name }: { name: string }) {
   const normalizeTechniques = (input: Technique[]) => {
     return input
       .filter((technique): technique is Technique => Boolean(technique) && typeof technique === "object")
-      .map((technique) => ({
-        ...technique,
-        linkedTechniqueIds: Array.isArray((technique as { linkedTechniqueIds?: unknown }).linkedTechniqueIds)
-          ? (technique as { linkedTechniqueIds: string[] }).linkedTechniqueIds
-          : [],
-      }));
+      .map((technique) => {
+        const voiceNoteIdRaw = (technique as { voiceNoteId?: unknown }).voiceNoteId;
+        const voiceNoteId =
+          typeof voiceNoteIdRaw === "string" && voiceNoteIdRaw.trim().length > 0 ? voiceNoteIdRaw.trim() : null;
+
+        const voiceNoteTranscriptRaw = (technique as { voiceNoteTranscript?: unknown }).voiceNoteTranscript;
+        const voiceNoteTranscript =
+          typeof voiceNoteTranscriptRaw === "string" && voiceNoteTranscriptRaw.trim().length > 0
+            ? voiceNoteTranscriptRaw
+            : null;
+
+        const voiceNoteTranscriptRomanizedRaw = (technique as { voiceNoteTranscriptRomanized?: unknown })
+          .voiceNoteTranscriptRomanized;
+        const voiceNoteTranscriptRomanized =
+          typeof voiceNoteTranscriptRomanizedRaw === "string" && voiceNoteTranscriptRomanizedRaw.trim().length > 0
+            ? voiceNoteTranscriptRomanizedRaw
+            : voiceNoteTranscript
+              ? romanizeHindiTranscript(voiceNoteTranscript)
+              : null;
+
+        return {
+          ...technique,
+          voiceNoteId,
+          voiceNoteTranscript,
+          voiceNoteTranscriptRomanized,
+          linkedTechniqueIds: Array.isArray((technique as { linkedTechniqueIds?: unknown }).linkedTechniqueIds)
+            ? (technique as { linkedTechniqueIds: string[] }).linkedTechniqueIds
+            : [],
+        };
+      });
   };
 
   const fabRef = useRef<HTMLButtonElement | null>(null);
@@ -1208,6 +1232,9 @@ function MainScreen({ name }: { name: string }) {
       dateIso: technique.dateIso,
       tags: technique.tags,
       notes: technique.notes,
+      voiceNoteId: technique.voiceNoteId ?? null,
+      voiceNoteTranscript: technique.voiceNoteTranscript ?? null,
+      voiceNoteTranscriptRomanized: technique.voiceNoteTranscriptRomanized ?? null,
       links: technique.links,
       linkedTechniqueIds: technique.linkedTechniqueIds,
       favorite: technique.favorite,
@@ -1228,6 +1255,9 @@ function MainScreen({ name }: { name: string }) {
       dateIso: nowIso,
       tags: [],
       notes: "",
+      voiceNoteId: null,
+      voiceNoteTranscript: null,
+      voiceNoteTranscriptRomanized: null,
       links: [],
       linkedTechniqueIds: [],
       favorite: false,
@@ -1245,6 +1275,18 @@ function MainScreen({ name }: { name: string }) {
       dateIso: draftTechnique.dateIso,
       tags: dedupeStrings(draftTechnique.tags),
       notes: draftTechnique.notes.trim(),
+      voiceNoteId:
+        typeof draftTechnique.voiceNoteId === "string" && draftTechnique.voiceNoteId.trim()
+          ? draftTechnique.voiceNoteId.trim()
+          : null,
+      voiceNoteTranscript:
+        typeof draftTechnique.voiceNoteTranscript === "string" && draftTechnique.voiceNoteTranscript.trim()
+          ? draftTechnique.voiceNoteTranscript.trim()
+          : null,
+      voiceNoteTranscriptRomanized:
+        typeof draftTechnique.voiceNoteTranscriptRomanized === "string" && draftTechnique.voiceNoteTranscriptRomanized.trim()
+          ? draftTechnique.voiceNoteTranscriptRomanized.trim()
+          : null,
       links: draftTechnique.links,
       linkedTechniqueIds: draftTechnique.linkedTechniqueIds,
       favorite: draftTechnique.favorite,
@@ -1277,6 +1319,11 @@ function MainScreen({ name }: { name: string }) {
   };
 
   const deleteTechnique = (techniqueId: string) => {
+    const existing = techniques.find((technique) => technique.id === techniqueId);
+    const voiceNoteId = typeof existing?.voiceNoteId === "string" ? existing.voiceNoteId : "";
+    if (voiceNoteId) {
+      deleteVoiceNote(voiceNoteId).catch(() => {});
+    }
     setTechniques((current) => current.filter((technique) => technique.id !== techniqueId));
     setDraftTechnique(null);
     setActiveTechniqueId(null);
@@ -1753,6 +1800,8 @@ function MainScreen({ name }: { name: string }) {
           onDelete={() => deleteTechnique(draftTechnique.id)}
           onImport={() => openImportFrom("edit")}
           allTechniques={techniques}
+          transcriptLanguage={sessionDefaults.transcriptLanguage}
+          onTranscriptLanguageChange={setTranscriptLanguagePreference}
         />
       );
     }
